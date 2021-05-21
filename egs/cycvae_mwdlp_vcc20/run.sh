@@ -1042,6 +1042,8 @@ if [ $mdl_name_vc == "cycmelspxlf0capspkvae-gauss-smpl_sparse" ]; then
 fi
 
 
+# Run train_sparse-gru-cycle-melsp-x-lf0cap-spk-vae-gauss-smpl.py
+#   code in `https://github.com/tarepan/cyclevae-vc-neuralvoco/blob/master/src/bin/train_sparse-gru-cycle-melsp-x-lf0cap-spk-vae-gauss-smpl.py`
 # STAGE 4 {{
 # set variables
 expdir_vc=exp/tr_${setting_vc}
