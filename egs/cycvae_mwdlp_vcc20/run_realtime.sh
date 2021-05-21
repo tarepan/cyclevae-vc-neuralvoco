@@ -322,7 +322,7 @@ fi
 fi
 fi
 
-
+# Dump model parameters from trained model, then compile realtime VC system written with Clang.
 # STAGE 0 {{{
 if [ `echo ${stage} | grep 0` ];then
     echo "###########################################################"
