@@ -1,5 +1,8 @@
-# Real-time low-latency multispeaker voice conversion (VC) with cyclic variational autoencoder (CycleVAE) and multiband WaveRNN using data-driven linear prediction (MWDLP)
+# CycVAE-MWDLP VC
+Fast non-parallel VC.
 
+## Original paper
+Patrick Lumban Tobing & Tomoki Toda. (2021) `Low-latency real-time non-parallel voice conversion based on cyclic variational autoencoder and multiband WaveRNN with data-driven linear prediction`. Arxiv.
 
 ## Requirements:
 - UNIX
@@ -48,9 +51,4 @@ or
 
 
 ## Contact
-
-Patrick Lumban Tobing
-
-patrickltobing@gmail.com
-
-patrick.lumbantobing@g.sp.m.is.nagoya-u.ac.jp
+Please check original repository.  
