@@ -3,6 +3,7 @@
 # Copyright 2021 Patrick Lumban Tobing (Nagoya University)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
+# Step1: Download and unzip VCC2020
 #http://vc-challenge.org/
 #https://github.com/nii-yamagishilab/VCC2020-database
 
@@ -24,7 +25,9 @@ unzip vcc2020_database_groundtruth.zip
 rm -vf vcc2020_database_groundtruth.zip
 
 rm -vfr __MACOSX
+# --fin Step1--
 
+# Step2: Move data from unziped directories to newly generated directories, then remove unziped directories
 trg_dir=wav_24kHz
 
 mkdir -p ${trg_dir}
@@ -43,3 +46,4 @@ rm -vfr target_task1
 rm -vfr target_task2
 rm -vfr vcc2020_database_evaluation
 rm -vfr vcc2020_database_groundtruth
+# -- fin Step2
