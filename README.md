@@ -49,9 +49,9 @@ $ cd ..
 
 Real-time implementation is based on [LPCNet](https://github.com/mozilla/LPCNet/).
 
-### Training Speed <!-- omit in toc -->
+<!-- ### Training Speed <!- omit in toc ->
 X3.37 [iter/sec] @ NVIDIA T4 Google Colaboratory (AMP+)
-
+ -->
 ## Original paper
 [![Paper](http://img.shields.io/badge/paper-arxiv.2105.09858-B31B1B.svg)][paper]  
 <!-- https://arxiv2bibtex.org/?q=2105.09858&format=bibtex -->
