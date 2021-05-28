@@ -34,19 +34,16 @@ TORCHVISION_VERSION := 0.9.1
 TORCHAUDIO_VERSION := 0.8.1
 # End Step2
 
-# .PHONY will run in default
 .PHONY: all clean
 
 all: activate torch
 
 activate:
-	test -d venv || virtualenv -p python$(PYTHON_VERSION) venv
 	# Install Python dependencies.
-	. venv/bin/activate; pip install pip --upgrade; pip install -r requirements.txt; pip install matplotlib;
-	touch venv/bin/activate
+	pip install pip --upgrade; pip install -r requirements.txt; pip install matplotlib;
 
 torch: activate
-	. venv/bin/activate; pip install pip --upgrade; \
+	pip install pip --upgrade; \
 	\ # Install `torch`, `torch-optimizer`, `torchvision` and `torchaudio` based on CUDA version, PyTorch version and Python version.
         pip install https://download.pytorch.org/whl/cu$(CUDA_VERSION_WITHOUT_DOT)/torch-$(PYTORCH_VERSION)%2Bcu$(CUDA_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT_M)-linux_x86_64.whl; pip install torch-optimizer; \
             pip install https://download.pytorch.org/whl/cu$(CUDA_VERSION_WITHOUT_DOT)/torchvision-$(TORCHVISION_VERSION)%2Bcu$(CUDA_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT_M)-linux_x86_64.whl; \

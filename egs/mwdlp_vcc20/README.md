@@ -29,9 +29,8 @@ maybe (not yet checked by myself)
 
 #### Requirements:
 - UNIX
-- 3.6 >= python <= 3.9
+- 3.6 <= python <= 3.9
 - CUDA 11.1
-- virtualenv
 - jq
 - make
 - gcc

@@ -24,9 +24,8 @@ Jump to **[Notebook in Google Colaboratory][notebook]**, then Run. that's all!!
 ### Install <!-- omit in toc -->
 #### Requirements:
 - UNIX
-- 3.6 >= python <= 3.9
+- 3.6 <= python <= 3.9
 - CUDA 11.1
-- virtualenv
 - jq
 - make
 - gcc
