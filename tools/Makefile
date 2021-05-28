@@ -1,3 +1,4 @@
+# Step1: Check Python version compatibility (3.6 <= x <= 3.9)
 PYTHON_VERSION_MIN=3.6
 PYTHON_VERSION_MAX=3.9
 PYTHON_VERSION=$(shell python3 -c "import sys;t='{v[0]}.{v[1]}'.format(v=list(sys.version_info[:2]));sys.stdout.write(t)")
@@ -22,24 +23,31 @@ endif
 
 #$(info $$PYTHON_VERSION_WITHOUT_DOT_M is [${PYTHON_VERSION_WITHOUT_DOT_M}])
 
+# End Step1
+
+# Step2: Check CUDA version compatibility
 CUDA_VERSION := 11.1
 CUDA_VERSION_WITHOUT_DOT = $(strip $(subst .,,$(CUDA_VERSION)))
 
 PYTORCH_VERSION := 1.8.1
 TORCHVISION_VERSION := 0.9.1
 TORCHAUDIO_VERSION := 0.8.1
+# End Step2
 
+# .PHONY will run in default
 .PHONY: all clean
 
 all: activate torch
 
 activate:
 	test -d venv || virtualenv -p python$(PYTHON_VERSION) venv
+	# Install Python dependencies.
 	. venv/bin/activate; pip install pip --upgrade; pip install -r requirements.txt; pip install matplotlib;
 	touch venv/bin/activate
 
 torch: activate
 	. venv/bin/activate; pip install pip --upgrade; \
+	\ # Install `torch`, `torch-optimizer`, `torchvision` and `torchaudio` based on CUDA version, PyTorch version and Python version.
         pip install https://download.pytorch.org/whl/cu$(CUDA_VERSION_WITHOUT_DOT)/torch-$(PYTORCH_VERSION)%2Bcu$(CUDA_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT_M)-linux_x86_64.whl; pip install torch-optimizer; \
             pip install https://download.pytorch.org/whl/cu$(CUDA_VERSION_WITHOUT_DOT)/torchvision-$(TORCHVISION_VERSION)%2Bcu$(CUDA_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT)-cp$(PYTHON_VERSION_WITHOUT_DOT_M)-linux_x86_64.whl; \
             pip install https://download.pytorch.org/whl/torchaudio-${TORCHAUDIO_VERSION}-cp${PYTHON_VERSION_WITHOUT_DOT}-cp${PYTHON_VERSION_WITHOUT_DOT_M}-linux_x86_64.whl
@@ -47,4 +55,3 @@ torch: activate
 clean:
 	rm -fr venv
 	find -iname "*.pyc" -delete
-
