@@ -1,7 +1,7 @@
 <div align="center">
 
 # MWDLP <!-- omit in toc -->
-<!-- [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)][notebook] -->
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)][notebook]
 [![Paper](http://img.shields.io/badge/paper-arxiv.2105.09856-B31B1B.svg)][paper]  
 
 </div>
@@ -21,13 +21,11 @@ Real-time implementation is based on [LPCNet](https://github.com/mozilla/LPCNet/
 [samples](https://demo-mwdlp-interspeech2021.audioeval.net/)
 
 ## How to Use
-<!-- ### Quick training <!- omit in toc ->
+### Quick training <!- omit in toc ->
 Jump to **[Notebook in Google Colaboratory][notebook]**, then Run. that's all!!  
- -->
-### Install <!-- omit in toc -->
-maybe (not yet checked by myself)  
 
-#### Requirements:
+### Install <!-- omit in toc -->
+#### Requirements
 - UNIX
 - 3.6 <= python <= 3.9
 - CUDA 11.1
@@ -41,8 +39,6 @@ $ cd ../../tools
 $ make
 $ cd ..
 ```
-
-
 
 ### Training <!-- omit in toc -->
 Preprocessing -> 4-step Training -> Clang model compiling -> 2 Demo  
@@ -76,6 +72,7 @@ Eprint = {arXiv:2105.09856},
 ```
 
 [paper]:https://arxiv.org/abs/2105.09856
+[notebook]:https://colab.research.google.com/github/tarepan/cyclevae-vc-neuralvoco/blob/master/egs/mwdlp_vcc20/MWDLP.ipynb
 
 ## Difference from original research
 - Dataset
