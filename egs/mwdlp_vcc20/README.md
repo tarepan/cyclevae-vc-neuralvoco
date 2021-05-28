@@ -21,8 +21,8 @@ Real-time implementation is based on [LPCNet](https://github.com/mozilla/LPCNet/
 [samples](https://demo-mwdlp-interspeech2021.audioeval.net/)
 
 ## How to Use
-### Quick training <!- omit in toc ->
-Jump to **[Notebook in Google Colaboratory][notebook]**, then Run. that's all!!  
+### Quick training <!-- omit in toc -->
+Jump to **[Notebook in Google Colaboratory][notebook]**, then Run. that's all!  
 
 ### Install <!-- omit in toc -->
 #### Requirements
