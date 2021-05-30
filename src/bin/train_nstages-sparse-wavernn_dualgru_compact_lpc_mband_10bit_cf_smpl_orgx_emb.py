@@ -50,12 +50,14 @@ from dataset import FeatureDatasetNeuVoco, padding
 
 def data_generator(dataloader, device, batch_size, upsampling_factor, limit_count=None, n_bands=10):
     """TRAINING BATCH GENERATOR
-
+    Wrap PyTorch dataloader.
+    
     Args:
         wav_list (str): list of wav files
         feat_list (str): list of feat files
         batch_size (int): batch size
         wav_transform (func): preprocessing function for waveform
+        limit_count: The maximum number of item the Generator will yeild (Not used now (None=Infinite))
 
     Return:
         (object): generator instance
@@ -127,16 +129,20 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
                     slens_acc[i] -= delta
                     flens_acc[i] -= delta_frm
 
+                # Yielded, count incremented.
                 count += 1
+                # Batch break candidate 1/2: limit_count argument
                 if limit_count is not None and count > limit_count:
                     break
                 len_frm -= delta_frm
                 if len_frm > 0:
                     x_ss += delta
                     f_ss += delta_frm
+                # Batch break candidate 2/2:
                 else:
                     break
 
+            # Generator break candidate 1/1: limit_count argument (If limit-based batch break occured in batch loop, this also break whole generator)
             if limit_count is not None and count > limit_count:
                 break
             c_idx += 1
@@ -144,9 +150,16 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
             #if c_idx > 1:
             #if c_idx > 2:
             #    break
-
+        
         yield [], [], [], [], [], -1, -1, [], [], [], [], [], [], [], [], [], [], [], [], []
 
+#         c_idx: total number of processed batches, idx: batch index
+#         If all batch processed once, yield (c_idx, idx) = (-1, -1) before next generation loop start.
+
+#         yield [], [],   [],   [],   [],    -1,  -1,        [],   [],   [],   [],   [],          [],            [],       [], \
+#         yield  x, xs, xs_c, xs_f, feat, c_idx, idx, featfiles, x_bs, f_bs, x_ss, f_ss, n_batch_utt, del_index_utt, max_slen, \
+#                           [],         [],              [],        [],        []
+#                     max_flen, idx_select, idx_select_full, slens_acc, flens_acc
 
 def save_checkpoint(checkpoint_dir, model_waveform, optimizer,
     min_eval_loss_ce_avg, min_eval_loss_ce_avg_std, min_eval_loss_err_avg, min_eval_loss_err_avg_std,
@@ -511,7 +524,6 @@ def main():
     #module_list += list(model_waveform.logits_sgns_c.parameters()) + list(model_waveform.logits_mags_c.parameters())
     #module_list += list(model_waveform.logits_sgns_f.parameters()) + list(model_waveform.logits_mags_f.parameters())
 
-    # model = ...
     optimizer = optim.RAdam(
         module_list,
         lr= args.lr,
@@ -519,8 +531,6 @@ def main():
         eps=1e-8,
         weight_decay=0,
     )
-    #optimizer = RAdam(module_list, lr=args.lr)
-    #optimizer = torch.optim.Adam(module_list, lr=args.lr)
 
     epoch_idx = 0
 
@@ -537,6 +547,7 @@ def main():
         optimizer.load_state_dict(checkpoint["optimizer"])
         epoch_idx = checkpoint["iterations"]
         logging.info("restored from %d-iter checkpoint." % epoch_idx)
+    # /resume
 
     def zero_wav_pad(x): return padding(x, args.pad_len*(args.upsampling_factor // args.n_bands), value=args.half_n_quantize)
     def zero_wav_org_pad(x): return padding(x, args.pad_len*args.upsampling_factor, value=args.half_n_quantize)
@@ -570,9 +581,7 @@ def main():
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, worgx_band_flag=True, worgx_flag=True, pad_wav_org_transform=pad_wav_org_transform)
     dataloader = DataLoader(dataset, batch_size=batch_size_utt, shuffle=True, num_workers=args.n_workers)
-    #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=1, n_bands=args.n_bands)
-    #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=5, n_bands=args.n_bands)
-    #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=20, n_bands=args.n_bands)
+    # Infinite generator
     generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands)
 
     # define generator evaluation
@@ -604,7 +613,7 @@ def main():
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, worgx_band_flag=True, worgx_flag=True, pad_wav_org_transform=pad_wav_org_transform)
     dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size_utt_eval, shuffle=False, num_workers=args.n_workers)
-    #generator_eval = data_generator(dataloader_eval, device, args.batch_size, args.upsampling_factor, limit_count=1, n_bands=args.n_bands)
+    # Infinite generator
     generator_eval = data_generator(dataloader_eval, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands)
 
     writer = SummaryWriter(args.expdir)
@@ -730,6 +739,8 @@ def main():
     change_min_flag = False
     sparse_min_flag = False
     sparse_check_flag = False
+    
+    # resume
     if args.resume is not None:
         np.random.set_state(checkpoint["numpy_random_state"])
         torch.set_rng_state(checkpoint["torch_random_state"])
@@ -742,6 +753,8 @@ def main():
         err_flag = checkpoint["err_flag"]
         iter_idx = checkpoint["iter_idx"]
         min_idx = checkpoint["min_idx"]
+    # /resume
+
     while idx_stage < args.n_stage-1 and iter_idx + 1 >= t_starts[idx_stage+1]:
         idx_stage += 1
         logging.info(idx_stage)
@@ -753,17 +766,29 @@ def main():
     eps = torch.finfo(indices_1hot.dtype).eps
     eps_1 = 1-eps
     logging.info(f"eps: {eps}\neps_1: {eps_1}")
+
+    ##### Training Loop #####
     logging.info("==%d EPOCH==" % (epoch_idx+1))
     logging.info("Training data")
     while True:
+        # =============================================================================================================================================
+        # =============================================================================================================================================
+        # =============================================================================================================================================
+        # Training of a batch
+
         start = time.time()
         batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
             del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator)
-        if c_idx < 0: # summarize epoch
-            # save current epoch model
+
+        # All training batches processed once (c_idx == -1)
+        if c_idx < 0:
+            # Training surrary of this epoch and evaluation
+
+            # Stash random state during evaluation
             numpy_random_state = np.random.get_state()
             torch_random_state = torch.get_rng_state()
-            # report current epoch
+
+            # Training summary of a epoch
             text_log = "(EPOCH:%d) average optimization loss = %.6f (+- %.6f) %.6f (+- %.6f) %% "\
                     "%.6f (+- %.6f) %.6f (+- %.6f) %% %.6f (+- %.6f) %.6f (+- %.6f) %% , %.6f (+- %.6f) %.6f (+- %.6f) , %.6f (+- %.6f) %.6f (+- %.6f)" % (epoch_idx + 1,
                     np.mean(loss_ce_avg), np.std(loss_ce_avg), np.mean(loss_err_avg), np.std(loss_err_avg),
@@ -779,7 +804,13 @@ def main():
             logging.info("%s ;; (%.3f min., %.3f sec / batch)" % (text_log, total / 60.0, total / iter_count))
             logging.info("estimated time until max. step = {0.days:02}:{0.hours:02}:{0.minutes:02}:"\
             "{0.seconds:02}".format(relativedelta(seconds=int((args.step_count - (iter_idx + 1)) * total))))
-            # compute loss in evaluation data
+            # /Training summary of a epoch
+
+            # ========================================================================================================================
+            # ========================================================================================================================
+            # Evaluation of an epoch
+
+            # Clear training loss, prepare to compute evaluation loss
             total = 0
             iter_count = 0
             loss_ce_avg = []
@@ -799,16 +830,21 @@ def main():
                 loss_err_f[i] = []
                 loss_fro[i] = []
                 loss_l1[i] = []
+
             model_waveform.eval()
             for param in model_waveform.parameters():
                 param.requires_grad = False
             logging.info("Evaluation data")
             while True:
+                # ========================================================================================================================
+                # Evaluation of an batch
                 with torch.no_grad():
                     start = time.time()
                     batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
                         del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator_eval)
+                    # All evaluation batches processed once (c_idx == -1)
                     if c_idx < 0:
+                        # Evaluation of this epoch is ended.
                         break
 
                     x_es = x_ss+x_bs
@@ -1016,7 +1052,6 @@ def main():
                     batch_loss_err_f_avg = batch_loss_err_f_.mean().item()
                     batch_loss_ce_avg = (batch_loss_ce_c_avg + batch_loss_ce_f_avg) / 2
                     batch_loss_err_avg = (batch_loss_err_c_avg + batch_loss_err_f_avg) / 2
-
                     total_eval_loss["eval/loss_ce"].append(batch_loss_ce_avg)
                     total_eval_loss["eval/loss_err"].append(batch_loss_err_avg)
                     total_eval_loss["eval/loss_ce_c"].append(batch_loss_ce_c_avg)
@@ -1073,6 +1108,8 @@ def main():
                     logging.info("%s (%.3f sec)" % (text_log, time.time() - start))
                     iter_count += 1
                     total += time.time() - start
+                # /Evaluation of an batch
+                # ========================================================================================================================
             logging.info('sme %d' % (epoch_idx + 1))
             for key in total_eval_loss.keys():
                 total_eval_loss[key] = np.mean(total_eval_loss[key])
@@ -1112,6 +1149,8 @@ def main():
                 eval_loss_fro_std[i] = np.std(loss_fro[i])
                 eval_loss_l1[i] = np.mean(loss_l1[i])
                 eval_loss_l1_std[i] = np.std(loss_l1[i])
+
+            # Logging
             text_log = "(EPOCH:%d) average evaluation loss = %.6f (+- %.6f) %.6f (+- %.6f) %% "\
                     "%.6f (+- %.6f) %.6f (+- %.6f) %% %.6f (+- %.6f) %.6f (+- %.6f) %% , %.6f (+- %.6f) %.6f (+- %.6f) , %.6f (+- %.6f) %.6f (+- %.6f) " % (epoch_idx + 1,
                     eval_loss_ce_avg, eval_loss_ce_avg_std, eval_loss_err_avg, eval_loss_err_avg_std,
@@ -1125,6 +1164,8 @@ def main():
                             eval_loss_ce_f[i], eval_loss_ce_f_std[i], eval_loss_err_f[i], eval_loss_err_f_std[i],
                                 eval_loss_fro[i], eval_loss_fro_std[i], eval_loss_l1[i], eval_loss_l1_std[i])
             logging.info("%s ;; (%.3f min., %.3f sec / batch)" % (text_log, total / 60.0, total / iter_count))
+            # /Logging
+
             if (not sparse_min_flag) and (iter_idx + 1 >= t_ends[idx_stage]):
                 sparse_check_flag = True
             if (not sparse_min_flag and sparse_check_flag) \
@@ -1193,14 +1234,26 @@ def main():
                                 min_eval_loss_ce_f[i], min_eval_loss_ce_f_std[i], min_eval_loss_err_f[i], min_eval_loss_err_f_std[i],
                                     min_eval_loss_fro[i], min_eval_loss_fro_std[i], min_eval_loss_l1[i], min_eval_loss_l1_std[i])
                 logging.info("%s min_idx=%d" % (text_log, min_idx+1))
+            # /Evaluation of an epoch
+            # ========================================================================================================================
+            # ========================================================================================================================
+
+            # Save checkpoint with N epoch interval (Best epoch is saved even if interval is not yet come)
             #if ((epoch_idx + 1) % args.save_interval_epoch == 0) or (epoch_min_flag):
             #    logging.info('save epoch:%d' % (epoch_idx+1))
             #    save_checkpoint(args.expdir, model_waveform, optimizer, numpy_random_state, torch_random_state, epoch_idx + 1)
+
+            # Save checkpoint every epoch
             logging.info('save epoch:%d' % (epoch_idx+1))
             save_checkpoint(args.expdir, model_waveform, optimizer,
                 min_eval_loss_ce_avg, min_eval_loss_ce_avg_std, min_eval_loss_err_avg, min_eval_loss_err_avg_std,
                     min_eval_loss_l1_avg, min_eval_loss_l1_fb, err_flag,
                     iter_idx, min_idx, numpy_random_state, torch_random_state, epoch_idx + 1)
+            
+            # ========================================================================================================================
+            # ========================================================================================================================
+            # Next epoch
+            # Clear evaluation loss, prepare to start training
             total = 0
             iter_count = 0
             loss_ce_avg = []
@@ -1220,9 +1273,13 @@ def main():
                 loss_err_f[i] = []
                 loss_fro[i] = []
                 loss_l1[i] = []
+
             epoch_idx += 1
+
+            # Restore stashed state
             np.random.set_state(numpy_random_state)
             torch.set_rng_state(torch_random_state)
+            
             model_waveform.train()
             for param in model_waveform.parameters():
                 param.requires_grad = True
@@ -1231,16 +1288,22 @@ def main():
             if args.lpc > 0:
                 for param in model_waveform.logits.parameters():
                     param.requires_grad = False
-            # start next epoch
+
             if iter_idx < args.step_count:
                 start = time.time()
                 logging.info("==%d EPOCH==" % (epoch_idx+1))
                 logging.info("Training data")
+                # Stepping the generator is equal to starting next epoch.
                 batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
                     del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator)
             else:
+                # Training Finished.
                 break
-        # feedforward and backpropagate current batch
+            # /Next epoch
+            # ========================================================================================================================
+            # ========================================================================================================================
+
+        # Forward
         logging.info("%d iteration [%d]" % (iter_idx+1, epoch_idx+1))
 
         x_es = x_ss+x_bs
@@ -1327,6 +1390,7 @@ def main():
         sample_indices_f = torch.sum(logits_gumbel_norm_1hot*indices_1hot,-1)
         batch_x_output = decode_mu_law_torch(sample_indices_c*args.cf_dim+sample_indices_f)
         batch_x_output_fb = pqmf.synthesis(batch_x_output.transpose(1,2))[:,0]
+        # /Forward?
 
         # samples check
         #i = np.random.randint(0, batch_x_c_output.shape[0])
@@ -1479,6 +1543,7 @@ def main():
                         total_train_loss[key] = np.mean(total_train_loss[key])
                         logging.info(f"(Steps: {iter_idx}) {key} = {total_train_loss[key]:.4f}.")
                     write_to_tensorboard(writer, iter_idx, total_train_loss)
+                    # Reset `total_train_loss`
                     total_train_loss = defaultdict(list)
                 total += time.time() - start
                 continue
@@ -1561,12 +1626,15 @@ def main():
         loss_l1_avg.append(batch_loss_l1_avg)
         loss_fro_fb.append(batch_loss_fro_fb)
         loss_l1_fb.append(batch_loss_l1_fb)
-
+        ## Total
         batch_loss += batch_loss_ce_.sum() + batch_loss_ce_f_.sum() \
                         + batch_loss_ce_.mean(-1).sum() + batch_loss_ce_f_.mean(-1).sum() \
                             + batch_loss_fro_.sum() + batch_loss_l1_.sum() \
                                 + batch_loss_fro_fb_.sum() + batch_loss_l1_fb_.sum()
+        ## /Total
+        # /loss
 
+        # == Backprop. & Param. Optim. ==
         optimizer.zero_grad()
         batch_loss.backward()
         flag = False
@@ -1581,6 +1649,7 @@ def main():
             continue
         torch.nn.utils.clip_grad_norm_(model_waveform.parameters(), 10)
         optimizer.step()
+        # == /Backprop. & Param. Optim. ==
 
         #logging.info(model_waveform.logits_c.weight[:,0])
         #logging.info(model_waveform.logits_f.weight[:,0])
@@ -1590,6 +1659,7 @@ def main():
         #logging.info(model_waveform.logits_sgns_f.weight[:,0].tanh())
         #logging.info(model_waveform.logits_mags_f.weight[:,0].exp())
 
+        # == Sparsification ==
         with torch.no_grad():
             if idx_stage < args.n_stage-1 and iter_idx + 1 == t_starts[idx_stage+1]:
                 idx_stage += 1
@@ -1597,7 +1667,9 @@ def main():
                 sparsify(model_waveform, iter_idx + 1, t_starts[idx_stage], t_ends[idx_stage], args.interval, densities[idx_stage], densities_p=densities[idx_stage-1])
             else:
                 sparsify(model_waveform, iter_idx + 1, t_starts[idx_stage], t_ends[idx_stage], args.interval, densities[idx_stage])
+        # == /Sparsification ==
 
+        # == Training summary of this batch ==
         text_log = "batch loss [%d] %d %d %d %d %d : %.3f %.3f %% %.3f %.3f %% %.3f %.3f %% , %.3f %.3f , %.3f %.3f" % (c_idx+1, max_slen, x_ss, x_bs,
             f_ss, f_bs, batch_loss_ce_avg, batch_loss_err_avg, batch_loss_ce_c_avg, batch_loss_err_c_avg,
                 batch_loss_ce_f_avg, batch_loss_err_f_avg, batch_loss_fro_avg, batch_loss_l1_avg, batch_loss_fro_fb, batch_loss_l1_fb)
@@ -1605,20 +1677,31 @@ def main():
             text_log += " [%d] %.3f %.3f %% %.3f %.3f %% , %.3f %.3f" % (i+1,
                 batch_loss_ce[i], batch_loss_err[i], batch_loss_ce_f[i], batch_loss_err_f[i], batch_loss_fro[i], batch_loss_l1[i])
         logging.info("%s (%.3f sec)" % (text_log, time.time() - start))
+        # == /Training summary of this batch ==
+
         iter_idx += 1
         #if iter_idx % args.save_interval_iter == 0:
         #    logging.info('save iter:%d' % (iter_idx))
         #    save_checkpoint(args.expdir, model_waveform, optimizer, np.random.get_state(), torch.get_rng_state(), iter_idx)
         iter_count += 1
+        
+        # Logging (Log & Tensorboard)
         if iter_idx % args.log_interval_steps == 0:
             logging.info('smt')
             for key in total_train_loss.keys():
                 total_train_loss[key] = np.mean(total_train_loss[key])
                 logging.info(f"(Steps: {iter_idx}) {key} = {total_train_loss[key]:.4f}.")
             write_to_tensorboard(writer, iter_idx, total_train_loss)
+            # Reset `total_train_loss`
             total_train_loss = defaultdict(list)
+        # /Logging (Log & Tensorboard)
+
         total += time.time() - start
 
+        # /Training of a batch
+        # =============================================================================================================================================
+        # =============================================================================================================================================
+        # =============================================================================================================================================
 
     logging.info("Maximum step is reached, please check the development optimum index, or continue training by increasing maximum step.")
 
