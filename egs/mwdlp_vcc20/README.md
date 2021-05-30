@@ -76,8 +76,9 @@ Eprint = {arXiv:2105.09856},
 
 ## Difference from original research
 - Dataset
-  - Paper: Mixed 300 speakers (estimated 25 hours)
-  - This impl.: [Voice Conversion Challenge 2020 dataset / VCC20](http://vc-challenge.org/)
+  - MWDLP Paper: Mixed 300 speakers (estimated 25 hours)
+  - CycVAE-MWDLP-VC Paper: [Voice Conversion Challenge 2020 dataset / VCC20](http://vc-challenge.org/)
+  - This impl.: VCC20
 
 ## Contact
 Please check original repository.
