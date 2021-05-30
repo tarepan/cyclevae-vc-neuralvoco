@@ -964,6 +964,7 @@ fi
 
 
 # STAGE 4 {{
+# Training code: `train_nstages-sparse-wavernn_dualgru_compact_lpc_mband_10bit_cf_smpl_orgx_emb.py`
 # set variables
 expdir_wave=exp/tr_${setting_wave}
 if [ `echo ${stage} | grep 4` ];then
@@ -975,15 +976,20 @@ if [ `echo ${stage} | grep 4` ];then
     echo "###########################################################"
     echo $expdir_wave
    
+    # If checkpoint-last.pkl exists,
     if [ -f "${expdir_wave}/checkpoint-last.pkl" ]; then
+        # read epoch/iteration from `checkpoint-last.pkl`, then write `${last_epoch} ${min_idx_epoch}` in `${confdir}.idx`.
         ${train_cmd} ${expdir_wave}/get_model_indices.log \
             get_model_indices.py \
                 --expdir ${expdir_wave} \
                 --confdir conf/${data_name}_wave
+        # Set resume index.
         idx_resume_wave=`cat conf/${data_name}_wave.idx | awk '{print $1}'`
         min_idx_wave=`cat conf/${data_name}_wave.idx | awk '{print $2}'`
         echo "${data_name}: idx_resume_wave=${idx_resume_wave}, min_idx_wave=${min_idx_wave}"
+    # else (no checkpoint),
     else
+        # Set resume index.
         idx_resume_wave=0
     fi
 
@@ -1069,6 +1075,24 @@ if [ `echo ${stage} | grep 4` ];then
                     --mid_dim ${mid_dim} \
                     --GPU_device ${GPU_device}
         fi
+
+# <<<<<<< Resume
+#             echo "mwdlp model is in training, please use less/vim to monitor the training log: ${expdir_wave}/log/train_resume-${idx_resume_wave}.log"
+#             ...
+#             ${cuda_cmd} ${expdir_wave}/log/train_resume-${idx_resume_wave}.log \
+#                     ...
+#                     --mid_dim ${mid_dim} \
+#                     --resume ${expdir_wave}/checkpoint-${idx_resume_wave}.pkl \
+#                     --GPU_device ${GPU_device}
+# =======
+#             echo "mwdlp model is in training, please use less/vim to monitor the training log: ${expdir_wave}/log/train.log"
+#             ...
+#             ${cuda_cmd} ${expdir_wave}/log/train.log \
+#                     ...
+#                     --mid_dim ${mid_dim} \
+#                     --GPU_device ${GPU_device}
+# >>>>>>> Fresh
+
         echo ""
         echo "mwdlp training finished, please check the log file, and try to compile/decode real-time"
         echo ""
