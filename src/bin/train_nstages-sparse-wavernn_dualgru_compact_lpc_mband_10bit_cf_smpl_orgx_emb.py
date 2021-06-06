@@ -80,11 +80,6 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
             #spcidx_s = batch['spcidx_s_e'][0]
             #spcidx_s = batch['spcidx_s'].data.numpy()
             #spcidx_e = batch['spcidx_s_e'][1]
-            #logging.info(slens)
-            #logging.info(flens)
-            #logging.info(spcidx_s)
-            #logging.info(spcidx_e)
-            #logging.info(spcidx_s)
             featfiles = batch['featfile']
             #cs = batch['c'].to(device)
             n_batch_utt = feat.size(0)
@@ -146,10 +141,6 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
             if limit_count is not None and count > limit_count:
                 break
             c_idx += 1
-            #if c_idx > 0:
-            #if c_idx > 1:
-            #if c_idx > 2:
-            #    break
         
         yield [], [], [], [], [], -1, -1, [], [], [], [], [], [], [], [], [], [], [], [], []
 
