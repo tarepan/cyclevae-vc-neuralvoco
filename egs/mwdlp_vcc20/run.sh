@@ -96,7 +96,10 @@ data_name=vcc20_${shiftms}ms
 ## WORLD F0_floor for cheaptrick: 3.0 * fs / (fft_size - 3.0)
 ## [https://github.com/mmorise/World/blob/master/src/cheaptrick.cpp] line 197
 ## mcep_alpha: frequency warping parameter for mel-cepstrum
+
 ## n_bands: number of bands for multiband modeling [a minimum of 4 kHz per band for proper modeling]
+##     22kHz - 5 bands / 24kHz - 6 bands / 48kHz - 12 bands
+
 if [ $fs -eq 22050 ]; then
     wav_org_dir=wav_22kHz
     data_name=${data_name}_22kHz
