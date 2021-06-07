@@ -64,7 +64,7 @@ def validate_length(x, y, upsampling_factor=0):
 
 
 class FeatureDatasetNeuVoco(Dataset):
-    """Dataset for neural vocoder, used in the paper implementation.
+    """Dataset for neural vocoder, used in the paper implementation. Dataset No.1.
     """
 
     def __init__(self, wav_list, feat_list, pad_wav_transform, pad_feat_transform, upsampling_factor,
@@ -532,7 +532,7 @@ def proc_random_spkcv_statcvexcit(src_idx, spk_list, n_cv, n_frm, n_spk, stat_sp
 
 
 class FeatureDatasetCycMceplf0WavVAE(Dataset):
-    """Dataset for cyclic mceplf0-waveform VAE-based VC
+    """Dataset for cyclic mceplf0-waveform VAE-based VC. Dataset No.2
     """
 
     def __init__(self, feat_list, pad_feat_transform, spk_list, stat_spk_list, n_cyc, string_path, excit_dim=None, cap_exc_dim=None,
@@ -823,7 +823,7 @@ class FeatureDatasetCycMceplf0WavVAE(Dataset):
 
 
 class FeatureDatasetEvalCycMceplf0WavVAE(Dataset):
-    """Dataset for evaluation cyclic mceplf0-waveform VAE-based VC
+    """Dataset for evaluation cyclic mceplf0-waveform VAE-based VC. Dataset No.3.
     """
 
     def __init__(self, file_list, pad_transform, spk_list, stat_spk_list, string_path, excit_dim=None, cap_exc_dim=None,
@@ -1280,64 +1280,3 @@ class FeatureDatasetEvalCycMceplf0WavVAE(Dataset):
                         'cv_src': cv_src, 'h_src_trg': h_src_trg, 'flen_src_trg': flen_src_trg, 'featfile': featfile_src, \
                         'file_src_trg_flag': file_src_trg_flag, 'spk_trg': spk_trg, 'spcidx_src': spcidx_src, \
                         'spcidx_src_trg': spcidx_src_trg, 'flen_spc_src': flen_spc_src, 'flen_spc_src_trg': flen_spc_src_trg}
-
-
-class FeatureDatasetVAE(Dataset):
-    """Dataset for VAE
-    """
-
-    def __init__(self, feat_list, pad_feat_transform, string_path, magsp=False, spk_list=None):
-        self.feat_list = feat_list
-        self.pad_feat_transform = pad_feat_transform
-        self.string_path = string_path
-        self.magsp = magsp
-        self.spk_list = spk_list
-        if "mel" in self.string_path:
-            self.mel = True
-        else:
-            self.mel = False
-
-    def __len__(self):
-        return len(self.feat_list)
-
-    def __getitem__(self, idx):
-        featfile = self.feat_list[idx]
-        feat = read_hdf5(featfile, self.string_path)
-        #if self.excit_dim is not None:
-        #    feat = np.c_[read_hdf5(featfile, '/feat_mceplf0cap')[:,:self.excit_dim], read_hdf5(featfile, self.string_path)]
-        frm_len = len(read_hdf5(featfile, '/f0_range'))
-
-        spcidx = read_hdf5(featfile, '/spcidx_range')[0]
-        f_ss = spcidx[0]
-        f_es = spcidx[-1]
-        if f_ss < 0:
-            f_ss = 0
-        if f_es > frm_len:
-            f_es = frm_len
-        spcidx_s_e = [f_ss, f_es]
-        feat = feat[spcidx_s_e[0]:spcidx_s_e[-1]]
-        flen = feat.shape[0]
-        if self.spk_list is not None:
-            idx_spk = self.spk_list.index(os.path.basename(os.path.dirname(featfile)))
-            spk_code = torch.LongTensor(self.pad_feat_transform(np.ones(flen)*idx_spk))
-
-        #mean_trg_list, std_trg_list, trg_code_list, pair_spk_list = \
-        #    proc_random_spkcv_statcvexcit(src_idx, self.spk_list, self.n_cv, flen, self.n_spk, \
-        #        self.stat_spk_list, self.mean_path, self.scale_path)
-
-        feat = torch.FloatTensor(self.pad_feat_transform(feat))
-        if self.magsp:
-            if self.mel:
-                feat_magsp = read_hdf5(featfile, '/magsp')[spcidx_s_e[0]:spcidx_s_e[-1]]
-            else:
-                feat_magsp = read_hdf5(featfile, '/worldsp')[spcidx_s_e[0]:spcidx_s_e[-1]]
-            feat_magsp = torch.FloatTensor(self.pad_feat_transform(feat_magsp))
-            if self.spk_list is not None:
-                return {'flen': flen, 'featfile': featfile, 'feat': feat, 'feat_magsp': feat_magsp, 'sc': spk_code}
-            else:
-                return {'flen': flen, 'featfile': featfile, 'feat': feat, 'feat_magsp': feat_magsp}
-        else:
-            if self.spk_list is not None:
-                return {'flen': flen, 'featfile': featfile, 'feat': feat, 'sc': spk_code}
-            else:
-                return {'flen': flen, 'featfile': featfile, 'feat': feat}
