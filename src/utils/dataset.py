@@ -64,7 +64,7 @@ def validate_length(x, y, upsampling_factor=0):
 
 
 class FeatureDatasetNeuVoco(Dataset):
-    """Dataset for neural vocoder
+    """Dataset for neural vocoder, used in the paper implementation.
     """
 
     def __init__(self, wav_list, feat_list, pad_wav_transform, pad_feat_transform, upsampling_factor,
@@ -72,6 +72,22 @@ class FeatureDatasetNeuVoco(Dataset):
                         wav_transform_out=None, with_excit=False, codeap_dim=None, n_bands=1, spk_list=None, cf_dim=None, magsp_flag=False,
                             pad_left=0, pad_right=0, wlat_flag=False, wspk_flag=False, worg_flag=False, worgx_flag=False, worgx_band_flag=False,
                                 wrec_flag=True, wf0_flag=False, worgx_rec_flag=None, pad_wav_org_transform=None):
+        """
+        Args:
+            n_bands (number) - band number, default single-band
+
+            Default False/None, expect for `True`
+            magsp_flag (Boolean) - (maybe) magnitude spectrogram input?
+            wlat_flag (Boolean) - 
+            wspk_flag (Boolean) -  w-speaker?
+            worg_flag (Boolean) - w-original?
+            worgx_flag (Boolean) - 
+            worgx_band_flag (Boolean) - 
+            wrec_flag (Boolean) - w-reconstruction?
+            wf0_flag (Boolean) - w-fo?
+            worgx_rec_flag=None - 
+        """
+        
         self.wav_list = wav_list
         self.feat_list = feat_list
         self.pad_wav_transform = pad_wav_transform
@@ -80,11 +96,13 @@ class FeatureDatasetNeuVoco(Dataset):
         #self.string_path_org = '/feat_mceplf0cap'
         self.string_path_org = string_path
         #self.string_path_org = '/feat_org_lf0'
+
         self.wlat_flag = wlat_flag
         self.wspk_flag = wspk_flag
         self.wf0_flag = wf0_flag
-        self.pad_wav_org_transform = pad_wav_org_transform
         self.magsp_flag = magsp_flag
+
+        self.pad_wav_org_transform = pad_wav_org_transform
         if string_path_ft is not None:
             self.string_path = string_path_ft
         else:
@@ -95,12 +113,14 @@ class FeatureDatasetNeuVoco(Dataset):
                 self.string_path_spk = self.string_path+"_spk"
             if self.wf0_flag:
                 self.string_path_f0 = self.string_path+"_f0"
+            # flag setup
             self.wlat_flag = True
         self.wrec_flag = wrec_flag
         self.worg_flag = worg_flag
         self.worgx_flag = worgx_flag
         self.worgx_band_flag = worgx_band_flag
         self.worgx_rec_flag = worgx_rec_flag
+
         self.pad_wav_f_transform = pad_wav_f_transform
         self.wav_transform = wav_transform
         self.wav_transform_in = wav_transform_in
@@ -123,6 +143,11 @@ class FeatureDatasetNeuVoco(Dataset):
         return len(self.wav_list)
 
     def __getitem__(self, idx):
+        """
+        Yield an item.
+        Args:
+            idx (number)
+        """
         wavfile = self.wav_list[idx]
         featfile = self.feat_list[idx]
         x_org = None
@@ -140,6 +165,8 @@ class FeatureDatasetNeuVoco(Dataset):
             else:
                 frm_len = shape_hdf5(featfile, self.string_path)[0]
 
+        ##################################################################################################################################################
+        ### multi-band (MWDLP paper config use this mode)
         if self.n_bands > 1:
             wavfile_pqmf_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(wavfile)))+"_pqmf_"+str(self.n_bands), \
                 os.path.basename(os.path.dirname(os.path.dirname(wavfile))), os.path.basename(os.path.dirname(wavfile)))
@@ -152,6 +179,7 @@ class FeatureDatasetNeuVoco(Dataset):
                 #wavfile_org = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(wavfile)))+"_pqmf_fsb_"+str(self.n_bands)+"_rec", \
                 x_org, _ = sf.read(wavfile_org, dtype=np.float32)
             for i in range(self.n_bands):
+                # PDMF file name handling (one/two degit)
                 if self.n_bands >= 10:
                     if i < self.n_bands - 1:
                         wavfile_pqmf = os.path.join(wavfile_pqmf_dir, os.path.basename(wavfile).replace(".wav", "_B-0"+str(i+1)+".wav"))
@@ -159,11 +187,13 @@ class FeatureDatasetNeuVoco(Dataset):
                         wavfile_pqmf = os.path.join(wavfile_pqmf_dir, os.path.basename(wavfile).replace(".wav", "_B-"+str(i+1)+".wav"))
                 else:
                     wavfile_pqmf = os.path.join(wavfile_pqmf_dir, os.path.basename(wavfile).replace(".wav", "_B-"+str(i+1)+".wav"))
+                # /
                 x_pqmf, _ = sf.read(wavfile_pqmf, dtype=np.float32)
                 if i > 0:
                     x_pqmf, _ = validate_length(x_pqmf, h, self.upsampling_factor_bands)
                     x = np.c_[x, np.expand_dims(x_pqmf,-1)]
                 else:
+                    # Load `h`, `h_lat`, `h_spk`, `h_f0`, `h_org`, `h_magsp_org`
                     if not self.with_excit:
                         if self.wrec_flag:
                             if check_hdf5(featfile, self.string_path):
@@ -218,6 +248,7 @@ class FeatureDatasetNeuVoco(Dataset):
                     #if self.worgx_band_flag:
                     #    assert((x!=x_org_band).all())
             
+            # Validation
             assert(x.shape[0]==h.shape[0]*self.upsampling_factor_bands)
             if self.worgx_flag or self.worgx_rec_flag:
                 assert(x_org.shape[0]==h.shape[0]*self.upsampling_factor)
@@ -233,6 +264,7 @@ class FeatureDatasetNeuVoco(Dataset):
                 if self.worg_flag:
                     assert(h.shape[0]==h_magsp_org.shape[0])
                     assert(h.shape[0]==h_org.shape[0])
+            # /Validation
 
             frm_len = h.shape[0]
             if self.spcidx:
@@ -313,6 +345,7 @@ class FeatureDatasetNeuVoco(Dataset):
                 idx_spk = self.spk_list.index(os.path.basename(os.path.dirname(featfile)))
                 spk_code = torch.LongTensor(self.pad_feat_transform(np.ones(flen)*idx_spk))
 
+            ## Item return
             if self.wav_transform_in is not None: # laplace-disc
                 x_t = torch.LongTensor(self.pad_wav_transform(x_t)) # disc in/trg_n_bands
                 if self.spk_list is not None:
@@ -393,6 +426,22 @@ class FeatureDatasetNeuVoco(Dataset):
                                     return {'x': x, 'feat': h, 'lat': h_lat, 'slen': slen, 'flen': flen, 'featfile': featfile}
                         else:
                             return {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
+#         !self.wlat_flag
+#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
+#         self.wlat_flag && self.worg_flag && self.wspk_flag
+#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat, 'spk': h_spk}
+#         self.wlat_flag && self.worg_flag && !self.wspk_flag
+#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat}
+#         self.wlat_flag && !self.worg_flag && self.wspk_flag
+#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat, 'spk': h_spk}
+#         self.wlat_flag && !self.worg_flag && !self.wspk_flag
+#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat}
+
+        ### /multi-band
+        ##################################################################################################################################################
+
+        ##################################################################################################################################################
+        ### single-band
         else:
             x, _ = sf.read(wavfile, dtype=np.float32)
             if not self.with_excit:
@@ -449,6 +498,8 @@ class FeatureDatasetNeuVoco(Dataset):
                         return {'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
                     else:
                         return {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
+        ### /single-band
+        ##################################################################################################################################################
 
 
 def proc_random_spkcv_statcvexcit(src_idx, spk_list, n_cv, n_frm, n_spk, stat_spk_list, mean_path, scale_path, excit_flag=True):
