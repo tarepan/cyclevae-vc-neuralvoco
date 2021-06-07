@@ -77,6 +77,10 @@ def main():
         os.makedirs(args.writedir)
 
     def noise_shaping(wav_list):
+        """
+        Iteratively load/validate/(preemphasis|deemphasis)/write audio files.
+        Emphasis Alpha is from `args.alpha` (default is `ALPHA` == 0.85)
+        """
         for wav_name in wav_list:
             # load wavfile and apply low cut filter
             x, fs = sf.read(wav_name)
