@@ -1736,6 +1736,9 @@ class GRU_EXCIT_DECODER(nn.Module):
 
 
 class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
+    """
+    GRU, wave, decoder, DualGPU, Compact, Multinand, CF
+    """
     def __init__(self, feat_dim=80, upsampling_factor=120, hidden_units=640, hidden_units_2=32, n_quantize=65536,
             kernel_size=7, dilation_size=1, do_prob=0, causal_conv=False, use_weight_norm=True, lpc=6, remove_scale_in_weight_norm=True,
                 right_size=2, n_bands=5, excit_dim=0, pad_first=False, mid_out_flag=True, red_dim=None, spk_dim=None, res_gru=None, frm_upd_flag=False,
@@ -1823,18 +1826,16 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
         self.embed_c_wav = nn.Embedding(self.cf_dim, self.wav_dim)
         self.embed_f_wav = nn.Embedding(self.cf_dim, self.wav_dim)
 
+        # `Sparse GRU` & `Dense GRU`?
         # GRU layer(s) coarse
         self.gru = nn.GRU(self.s_dim+self.wav_dim_bands*2, self.hidden_units, 1, batch_first=True)
         self.gru_2 = nn.GRU(self.s_dim+self.hidden_units, self.hidden_units_2, 1, batch_first=True)
 
-        # Output layers coarse
+        # `DualFC` for coarse bits
         self.out = DualFC(self.hidden_units_2, self.cf_dim, self.lpc, n_bands=self.n_bands, mid_out=self.mid_out, lin_flag=self.lin_flag)
 
-        # GRU layer(s) fine
+        # `Dence GRU` for fine bits
         self.gru_f = nn.GRU(self.s_dim+self.wav_dim_bands+self.hidden_units_2, self.hidden_units_2, 1, batch_first=True)
-
-        # Output layers fine
-        self.out_f = DualFC(self.hidden_units_2, self.cf_dim, self.lpc, n_bands=self.n_bands, mid_out=self.mid_out, lin_flag=self.lin_flag)
 
         # Prev logits if using data-driven lpc
         if self.lpc > 0:
@@ -1861,6 +1862,20 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
 
     def forward(self, c, x_c_prev, x_f_prev, x_c, spk_code=None, spk_aux=None, aux=None, h=None, h_2=None, h_f=None, h_spk=None, do=False, x_c_lpc=None, x_f_lpc=None,
             outpad_left=None, outpad_right=None, ret_res=False, aux_spk=None, ret_mid_feat=False, ret_mid_smpl=False, h_red=None):
+        """
+        Forward pass for single sample-step.
+        
+        Args:
+            x_c_prev: Sample coarse t-1
+            x_f_prev: Sample fine   t-1
+
+            h: Hidden state of Sparse GRU
+            h_2: Hidden state of Dense GRU
+            h_f: Hidden state of Fine GRU
+            h_spk: ※ not used
+        Returns:
+            Updated hidden states (h, h_2, h_f) are returned.
+        """
         # Input
         if self.scale_in_flag:
             if self.do_prob > 0 and do:
@@ -1899,7 +1914,8 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
             else:
                 conv = torch.repeat_interleave(self.conv_s_c(self.conv(c.transpose(1,2))).transpose(1,2),self.upsampling_factor,dim=1)
 
-        # GRU1
+        # Sparse GRU
+        # (features, embedding_coarse, embedding_fine) => (out, h)
         if x_c_prev.shape[1] < conv.shape[1]:
             conv = conv[:,:x_c_prev.shape[1]]
         if h is not None:
@@ -1909,13 +1925,15 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
             out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
                         self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2))
 
-        # GRU2
+        # Dense GRU
+        # (features, out_GRU_sparse) => (out_GRU_dense, h_2)
         if h_2 is not None:
             out_2, h_2 = self.gru_2(torch.cat((conv, out), 2), h_2) # B x T x C -> B x C x T -> B x T x C
         else:
             out_2, h_2 = self.gru_2(torch.cat((conv, out), 2))
 
         # GRU_fine
+        # (features, embedding_coarse, out_GRU_dense) => (out_GRU_fine, h_f)
         if h_f is not None:
             out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2), h_f)
         else:
@@ -1923,12 +1941,15 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
 
         # output
         if self.lpc > 0:
+            # (out_GRU_dense) => (signs_c, scales_c, lin_c, logits_c)
+            # (out_GRU_fine)  => (signs_f, scales_f, lin_f, logits_f)
             if self.lin_flag:
                 signs_c, scales_c, lin_c, logits_c = self.out(out_2.transpose(1,2))
                 signs_f, scales_f, lin_f, logits_f = self.out_f(out_f.transpose(1,2))
             else:
                 signs_c, scales_c, logits_c = self.out(out_2.transpose(1,2))
                 signs_f, scales_f, logits_f = self.out_f(out_f.transpose(1,2))
+
             # B x T x x n_bands x K, B x T x n_bands x K and B x T x n_bands x 256
             # x_lpc B x T_lpc x n_bands --> B x T x n_bands x K --> B x T x n_bands x K x 256
             # unfold put new dimension on the last
@@ -2096,17 +2117,20 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
             return seg_conv.transpose(1,2), conv_sc, out, out_2, out_f, logits_c, logits_f, h, h_2, h_f
 
     def generate(self, c, intervals=4000, spk_code=None, spk_aux=None, aux=None, outpad_left=None, outpad_right=None, pad_first=True):
+        """
+        Args:
+            c: Conditioning feature sequence [features, T_c]? Batch contained?
+        """
+        # Performance test utilities
         start = time.time()
         time_sample = []
-        #intervals /= self.n_bands
         intervals = 1000
+        # /Performance test utilities
 
         upsampling_factor = self.upsampling_factor
-
         c_pad = (self.n_quantize // 2) // self.cf_dim
-        f_pad = (self.n_quantize // 2) % self.cf_dim
-
-        B = c.shape[0]
+        f_pad = (self.n_quantize // 2) % self.cf_dim        
+        B = c.shape[0] # Dimension of a feature vector? or, batch?
 
         # Input
         if pad_first and outpad_left is None and outpad_right is None:
@@ -2122,6 +2146,7 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
         if self.lpc > 0:
             x_c_lpc = torch.empty(B,1,self.n_bands,self.lpc).cuda().fill_(c_pad).long() # B x 1 x n_bands x K
             x_f_lpc = torch.empty(B,1,self.n_bands,self.lpc).cuda().fill_(f_pad).long() # B x 1 x n_bands x K
+        # Sample sequence length
         T = c.shape[1]*upsampling_factor
 
         c_f = c[:,:1]
@@ -2184,6 +2209,7 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
 
         time_sample.append(time.time()-start)
         if self.lpc > 0:
+            # Single sample generation step
             for t in range(1,T):
                 start_sample = time.time()
 
@@ -2278,12 +2304,14 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
                         (time.time() - start) / intervals))
                     start = time.time()
 
+        # Performance report
         time_sample = np.array(time_sample)
         logging.info("average time / sample = %.6f sec (%ld samples) [%.3f kHz/s]" % \
                         (np.mean(time_sample), len(time_sample), 1.0/(1000*np.mean(time_sample))))
         logging.info("average throughput / sample = %.6f sec (%ld samples * %ld) [%.3f kHz/s]" % \
                         (np.sum(time_sample)/(len(time_sample)*c.shape[0]), len(time_sample), c.shape[0], \
                             len(time_sample)*c.shape[0]/(1000*np.sum(time_sample))))
+        # /Performance report
 
         if self.n_quantize == 65536:
             return ((x_c_out*self.cf_dim+x_f_out).transpose(1,2).float() - 32768.0) / 32768.0 # B x T x n_bands --> B x n_bands x T
