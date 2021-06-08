@@ -101,6 +101,7 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
                     if flens_acc[i] <= 0:
                         del_index_utt.append(i)
                 if len(del_index_utt) > 0:
+                    # delete specified vectors
                     x = torch.FloatTensor(np.delete(x.cpu().data.numpy(), del_index_utt, axis=0)).to(device)
                     xs = torch.FloatTensor(np.delete(xs.cpu().data.numpy(), del_index_utt, axis=0)).to(device)
                     xs_c = torch.LongTensor(np.delete(xs_c.cpu().data.numpy(), del_index_utt, axis=0)).to(device)
@@ -571,6 +572,7 @@ def main():
     dataset = FeatureDatasetNeuVoco(wav_list, feat_list, pad_wav_transform, pad_feat_transform, args.upsampling_factor, 
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, worgx_band_flag=True, worgx_flag=True, pad_wav_org_transform=pad_wav_org_transform)
+    # Dataset flags: worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue
     dataloader = DataLoader(dataset, batch_size=batch_size_utt, shuffle=True, num_workers=args.n_workers)
     # Infinite generator
     generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands)
@@ -603,6 +605,8 @@ def main():
     dataset_eval = FeatureDatasetNeuVoco(wav_list_eval, feat_list_eval, pad_wav_transform, pad_feat_transform, args.upsampling_factor, 
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, worgx_band_flag=True, worgx_flag=True, pad_wav_org_transform=pad_wav_org_transform)
+    # Same as training dataset except for `wav_list_eval` & `feat_list_eval`
+    # dataset flags: worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue
     dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size_utt_eval, shuffle=False, num_workers=args.n_workers)
     # Infinite generator
     generator_eval = data_generator(dataloader_eval, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands)
@@ -919,6 +923,7 @@ def main():
                     sample_indices_f = torch.sum(logits_gumbel_norm_1hot*indices_1hot,-1)
                     batch_x_output = decode_mu_law_torch(sample_indices_c*args.cf_dim+sample_indices_f)
                     batch_x = decode_mu_law_torch(batch_x_c*args.cf_dim+batch_x_f)
+                    # batch_x_output_*f*ull*b*and: subbands => fullband
                     batch_x_output_fb = pqmf.synthesis(batch_x_output.transpose(1,2))[:,0]
 
                     # samples check
