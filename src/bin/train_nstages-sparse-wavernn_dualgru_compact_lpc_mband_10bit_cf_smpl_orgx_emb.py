@@ -4,6 +4,9 @@
 # Copyright 2021 Patrick Lumban Tobing (Nagoya University)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
+# Main training code in stage 4 of MWDLP `run.sh`.
+# train_nstages-sparse-wavernn_dualgru_compact_lpc_mband_10bit_cf_smpl_orgx_emb.py
+
 from __future__ import division
 from __future__ import print_function
 
@@ -843,6 +846,15 @@ def main():
                     if c_idx < 0:
                         # Evaluation of this epoch is ended.
                         break
+
+                    ### Waveform check
+#                     pqmf = PQMF(args.n_bands).cuda()
+#                     samples = model_waveform.generate(batch_feat)
+#                     samples = pqmf.synthesis(samples)[:,0].cpu().data.numpy() # B x 1 x T --> B x T
+#                     # single waveform in a batch
+#                     samples = librosa.effects.deemphasis(samples, coef=0.85)
+#                     wav = np.clip(samples[:samples_len], -1, 0.999969482421875)
+                    ### /Waveform check
 
                     x_es = x_ss+x_bs
                     f_es = f_ss+f_bs
