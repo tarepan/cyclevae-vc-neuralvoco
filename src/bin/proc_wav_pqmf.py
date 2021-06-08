@@ -82,6 +82,12 @@ def main():
         os.makedirs(args.writesyndir)
 
     def noise_shaping(wav_list):
+        """
+        (fullband) Waveform => (fullband) emphasized waveform => (PQMF) => subband waveforms
+        Args:
+            wav_list: List of waveform file?
+        """
+        
         pqmf = PQMF(args.n_bands)
         print(f'{pqmf.subbands} {pqmf.A} {pqmf.taps} {pqmf.cutoff_ratio} {pqmf.beta}')
         #fs_band = args.fs // args.n_bands
@@ -89,17 +95,23 @@ def main():
         for wav_name in wav_list:
             x, fs = sf.read(wav_name)
 
-            ## check sampling frequency
+            ## Validate sampling rate.
             if not fs == args.fs:
                 print("ERROR: sampling frequency is not matched.")
                 sys.exit(1)
+            ## /Validate sampling rate
 
             x_bands_ana = pqmf.analysis(torch.FloatTensor(x).unsqueeze(0).unsqueeze(0))
             print(x_bands_ana.shape)
             x_bands_syn = pqmf.synthesis(x_bands_ana)
             print(x_bands_syn.shape)
+            
             for i in range(args.n_bands):
+                # Subband No.i
                 wav = np.clip(x_bands_ana[0,i].data.numpy(), -1, 0.999969482421875)
+
+                # Path handling (path suffix degit 1/2)
+                # "{args.writedir}{os.path.basename(wav_name).split(".")[0]}_B-{i+1}.wav"
                 if args.n_bands < 10:
                     wavpath = os.path.join(args.writedir, os.path.basename(wav_name).split(".")[0]+"_B-"+str(i+1)+".wav")
                 else:
@@ -108,29 +120,32 @@ def main():
                     else:
                         wavpath = os.path.join(args.writedir, os.path.basename(wav_name).split(".")[0]+"_B-"+str(i+1)+".wav")
                 print(wavpath)
+                # /Path handling
+                
+                # Save subband signal as .wav file with **original fs**, not enough lower (fs/n_band) fs.
                 sf.write(wavpath, wav, fs, 'PCM_16')
                 #sf.write(wavpath, wav, fs_band, 'PCM_16')
+                
+            # Write-back analy/synthed fullband waveform.
             wav = np.clip(x_bands_syn[0,0].data.numpy(), -1, 0.999969482421875)
             wav = deemphasis(wav, alpha=args.alpha)
             wavpath = os.path.join(args.writesyndir, os.path.basename(wav_name))
             print(wavpath)
             sf.write(wavpath, wav, fs, 'PCM_16')
+            # /Write-back analy/synthed fullband waveform.
 
-
-    # divie list
+    # Execution with multiple processes.
+    ## divie list
     file_lists = np.array_split(file_list, args.n_jobs)
     file_lists = [f_list.tolist() for f_list in file_lists]
-
-    # multi processing
     processes = []
     for f in file_lists:
         p = mp.Process(target=noise_shaping, args=(f,))
         p.start()
         processes.append(p)
-
-    # wait for all process
     for p in processes:
         p.join()
+    # /Execution with multiple processes.
 
 
 if __name__ == "__main__":
