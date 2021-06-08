@@ -239,6 +239,9 @@ def main():
 
     # define gpu decode function
     def gpu_decode(feat_list, gpu):
+        """
+        Generate waveforms from features with MWDLP.
+        """
         with torch.cuda.device(gpu):
             with torch.no_grad():
                 if args.string_path is not None and "spk-lat" in args.string_path:
@@ -334,11 +337,18 @@ def main():
                     n_enc=args.n_enc,
                     string_path=string_path)
 
-                # decode
+                ###################################################
+                ### decode
+                ### waveform_preemphasized = pipe(features, mwdlp.generate, pqmf.synthesis, clip)
+                ### deemphasis is done in different flow (other `run.sh` step).
+
+                # Performance test elements
                 time_sample = []
                 n_samples = []
                 n_samples_t = []
                 count = 0
+                # /Performance test elements
+
                 pqmf = PQMF(config.n_bands).cuda()
                 print(f'{pqmf.subbands} {pqmf.A} {pqmf.taps} {pqmf.cutoff_ratio} {pqmf.beta}')
                 for feat_ids, (batch_feat, n_samples_list) in generator:
@@ -347,48 +357,39 @@ def main():
                     logging.info(batch_feat.shape)
 
                     #batch_feat = F.pad(batch_feat.transpose(1,2), (model_waveform.pad_left,model_waveform.pad_right), "replicate").transpose(1,2)
+                    # Features => multiband signals => fullband waveforms
+                    # batch_features => batch_multibandWaveforms
                     samples = model_waveform.generate(batch_feat)
                     logging.info(samples.shape) # B x n_bands x T//n_bands
                     samples = pqmf.synthesis(samples)[:,0].cpu().data.numpy() # B x 1 x T --> B x T
                     logging.info(samples.shape)
-
                     samples_list = samples
 
+                    # Performance test elements
                     time_sample.append(time.time()-start)
                     n_samples.append(max(n_samples_list))
                     n_samples_t.append(max(n_samples_list)*len(n_samples_list))
+                    # /Performance test elements
 
+                    # Iteratively clip and save the audio.
                     for feat_id, samples, samples_len in zip(feat_ids, samples_list, n_samples_list):
                         #wav = np.clip(samples[:samples_len], -1, 1)
                         wav = np.clip(samples[:samples_len], -1, 0.999969482421875)
                         outpath = os.path.join(args.outdir, feat_id+".wav")
                         sf.write(outpath, wav, args.fs, "PCM_16")
                         logging.info("wrote %s." % (outpath))
-                    #break
+                    # /Iteratively clip and save the audio.
 
-                    #figname = os.path.join(args.outdir, feat_id+"_wav.png")
-                    #plt.subplot(2, 1, 1)
-                    #plt.plot(wav_src)
-                    #plt.title("source wave")
-                    #plt.subplot(2, 1, 2)
-                    #plt.plot(wav)
-                    #plt.title("generated wave")
-                    #plt.tight_layout()
-                    #plt.savefig(figname)
-                    #plt.close()
-                        
                     count += 1
-                    #if count >= 3:
-                    #if count >= 6:
-                    #if count >= 1:
-                    #    break
 
+                # Performance reports
                 logging.info("average time / sample = %.6f sec (%ld samples) [%.3f kHz/s]" % (\
                     sum(time_sample)/sum(n_samples), sum(n_samples), sum(n_samples)/(1000*sum(time_sample))))
                 logging.info("average throughput / sample = %.6f sec (%ld samples) [%.3f kHz/s]" % (\
                 sum(time_sample)/sum(n_samples_t), sum(n_samples_t), sum(n_samples_t)/(1000*sum(time_sample))))
+                # /Performance reports
 
-    # parallel decode
+    # Execution in parallel.
     processes = []
     gpu = 0
     for i, feat_list in enumerate(feat_lists):
@@ -398,10 +399,10 @@ def main():
         gpu += 1
         if (i + 1) % args.n_gpus == 0:
             gpu = 0
-
     # wait for all process
     for p in processes:
         p.join()
+    # /Execution in parallel.
 
 
 if __name__ == "__main__":
