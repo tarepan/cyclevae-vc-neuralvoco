@@ -76,7 +76,7 @@ class FeatureDatasetNeuVoco(Dataset):
         Args:
             n_bands (number) - band number, default single-band
 
-            Default False/None, expect for `True`
+            Default False/None, expect for `wrec_flag`
             magsp_flag (Boolean) - (maybe) magnitude spectrogram input?
             wlat_flag (Boolean) - 
             wspk_flag (Boolean) -  w-speaker?
@@ -404,10 +404,12 @@ class FeatureDatasetNeuVoco(Dataset):
                         else:
                             if self.worgx_flag or self.worgx_rec_flag:
                                 if self.worgx_band_flag:
+                                    # Add `feat_magsp` attribute or not.
                                     if not self.magsp_flag:
+                                        # v3.0 candidate / worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue
                                         return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
                                     else:
-                                        return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'feat_magsp': h_magsp, 'slen': slen, 'flen': flen, 'featfile': featfile}
+                                        return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_magsp': h_magsp}
                                 else:
                                     return {'x_org': x_org, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
                             else:
@@ -426,16 +428,16 @@ class FeatureDatasetNeuVoco(Dataset):
                                     return {'x': x, 'feat': h, 'lat': h_lat, 'slen': slen, 'flen': flen, 'featfile': featfile}
                         else:
                             return {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
-#         !self.wlat_flag
-#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
-#         self.wlat_flag && self.worg_flag && self.wspk_flag
-#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat, 'spk': h_spk}
-#         self.wlat_flag && self.worg_flag && !self.wspk_flag
-#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat}
-#         self.wlat_flag && !self.worg_flag && self.wspk_flag
-#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat, 'spk': h_spk}
-#         self.wlat_flag && !self.worg_flag && !self.wspk_flag
-#             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat}
+                        #         !self.wlat_flag
+                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
+                        #         self.wlat_flag && self.worg_flag && self.wspk_flag
+                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat, 'spk': h_spk}
+                        #         self.wlat_flag && self.worg_flag && !self.wspk_flag
+                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat}
+                        #         self.wlat_flag && !self.worg_flag && self.wspk_flag
+                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat, 'spk': h_spk}
+                        #         self.wlat_flag && !self.worg_flag && !self.wspk_flag
+                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat}
 
         ### /multi-band
         ##################################################################################################################################################
