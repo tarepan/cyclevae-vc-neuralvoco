@@ -5,8 +5,15 @@
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 # Main training code in stage 4 of MWDLP `run.sh`.
-# train_nstages-sparse-wavernn_dualgru_compact_lpc_mband_10bit_cf_smpl_orgx_emb.py
 
+# Filename: train_nstages-sparse-wavernn_dualgru_compact_lpc_mband_10bit_cf_smpl_orgx_emb.py
+#   - train: Training controller
+#   - nstages-sparse-wavernn: N-stage spasification on WaveRNN
+#   - dualgru_compact_lpc_: ?
+#   - mband: Multiband signal processing
+#   - 10bit_cf: 10bit coarse-fine output
+#   - smpl_orgx_emb: ?
+ 
 from __future__ import division
 from __future__ import print_function
 
@@ -201,9 +208,20 @@ def write_to_tensorboard(writer, steps, loss):
         writer.add_scalar(key, value, steps)
 
 
-## Based on lpcnet.py [https://github.com/mozilla/LPCNet/blob/master/src/lpcnet.py]
-## Modified to accomodate PyTorch model and n-stages of sparsification
 def sparsify(model_waveform, iter_idx, t_start, t_end, interval, densities, densities_p=None):
+    """
+    N-stage sparsification, based on [LPCNet](https://github.com/mozilla/LPCNet/blob/master/src/lpcnet.py).
+    Spasify a hidden state of `model_waveform.gru` in place.
+    
+    Args:
+        model_waveform: Target model, which should contain `.gru` GRU unit.
+        iter_idx: Current iteration index?
+        t_start: Sparsification-start iteration?
+        t_end: Sparsification-end iteration?
+        interval: Interval between sparsification stages?
+        densities: Target densities...?
+        densities_p: Target densities related something...?
+    """
     if iter_idx < t_start or ((iter_idx-t_start) % interval != 0 and iter_idx < t_end):
         pass
     else:
@@ -220,6 +238,7 @@ def sparsify(model_waveform, iter_idx, t_start, t_end, interval, densities, dens
                     r = 1 - (iter_idx-t_start)/(t_end - t_start)
                     density = densities_p[k] - (densities_p[k]-densities[k])*(1 - r)**5
                 logging.info('%ld: %lf %lf %lf' % (k+1, densities_p[k], densities[k], density))
+                # Below is common step
                 #recurrent weight
                 A = p[k*N:(k+1)*N, :]
                 #horizontal block structure (16) in input part, in real-time simultaneously computed for each 16 output using 2 registers (256x2 bits)
@@ -236,6 +255,7 @@ def sparsify(model_waveform, iter_idx, t_start, t_end, interval, densities, dens
                     r = 1 - (iter_idx-t_start)/(t_end - t_start)
                     density = 1 - (1-densities[k])*(1 - r)**5
                 logging.info('%ld: 1 %lf %lf' % (k+1, densities[k], density))
+                # Below is common step
                 #recurrent weight
                 A = p[k*N:(k+1)*N, :]
                 L = (A - torch.diag(torch.diag(A))).transpose(1, 0).reshape(N, N_16, 16)
@@ -243,7 +263,7 @@ def sparsify(model_waveform, iter_idx, t_start, t_end, interval, densities, dens
                 SS, _ = torch.sort(S.reshape(-1))
                 thresh = SS[round(N*N_16*(1-density))]
                 mask = torch.clamp(torch.repeat_interleave((S>=thresh).float(), 16, dim=1) + ones, max=1).transpose(1,0)
-                p[k*N:(k+1)*N, :] = p[k*N:(k+1)*N, :]*mask
+                p[k*N:(k+1)*N, :] = p[k*N:(k+1)*N, :]*mask # outputxinput
 
 
 def main():
