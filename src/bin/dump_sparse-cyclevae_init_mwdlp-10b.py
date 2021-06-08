@@ -37,7 +37,7 @@ import os
 import sys
 
 import torch
-from vcneuvoco import GRU_VAE_ENCODER, GRU_SPEC_DECODER
+from vcneuvoco import GRU_VAE_ENCODER, GRU_SPEC_DECODER, GRU_EXCIT_DECODER
 from vcneuvoco import GRU_SPK, SPKID_TRANSFORM_LAYER
 from vcneuvoco import GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF, decode_mu_law
 from pqmf import PQMF
@@ -53,14 +53,14 @@ import numpy as np
 
 #FS = 8000
 #FS = 16000
-FS = 22050
-#FS = 24000
+#FS = 22050
+FS = 24000
 #FFTL = 1024
 FFTL = 2048
 #SHIFTMS = 5
 #SHIFTMS = 4.9886621315192743764172335600907
-#SHIFTMS = 10
-SHIFTMS = 9.9773242630385487528344671201814
+SHIFTMS = 10
+#SHIFTMS = 9.9773242630385487528344671201814
 WINMS = 27.5
 HIGHPASS_CUTOFF = 65
 HPASS_FILTER_TAPS = 1023
@@ -123,13 +123,17 @@ def printSparseVector(f, A, name):
 def main():
     parser = argparse.ArgumentParser()
     # mandatory arguments
+    parser.add_argument("config_cycvae", metavar="config_cycvae.conf",
+                        type=str, help="path of model cycvae config")
+    parser.add_argument("model_cycvae", metavar="model_cycvae.pkl",
+                        type=str, help="path of model cycvae file")
     parser.add_argument("config", metavar="config_mwdlp10bit.conf",
                         type=str, help="path of model mwdlp10bit config")
     parser.add_argument("model", metavar="model_mwdlp10bit.pkl",
                         type=str, help="path of model mwdlp10bit file")
     # optional arguments
     parser.add_argument("--fs", metavar="sampling rate", default=FS,
-                    type=int, help="waveform sampling rate [Hz]")
+                        type=int, help="waveform sampling rate [Hz]")
     parser.add_argument("--shiftms", metavar="shift ms", default=SHIFTMS,
                         type=float, help="frame shift in feature extraction [ms]")
     parser.add_argument("--winms", metavar="window length ms", default=WINMS,
@@ -151,69 +155,75 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"]  = ""
 
     #set config and model
+    config_cycvae = torch.load(args.config_cycvae)
+    print(config_cycvae)
     config = torch.load(args.config)
     print(config)
-    spk_list = config.spk_list.split('@')
+    spk_list = config_cycvae.spk_list.split('@')
     n_spk = len(spk_list)
     print(spk_list)
 
     model_encoder_melsp = GRU_VAE_ENCODER(
-        in_dim=config.mel_dim,
+        in_dim=config_cycvae.mel_dim,
         n_spk=n_spk,
-        lat_dim=config.lat_dim,
-        hidden_layers=config.hidden_layers_enc,
-        hidden_units=config.hidden_units_enc,
-        kernel_size=config.kernel_size_enc,
-        dilation_size=config.dilation_size_enc,
-        causal_conv=config.causal_conv_enc,
+        lat_dim=config_cycvae.lat_dim,
+        hidden_layers=config_cycvae.hidden_layers_enc,
+        hidden_units=config_cycvae.hidden_units_enc,
+        kernel_size=config_cycvae.kernel_size_enc,
+        dilation_size=config_cycvae.dilation_size_enc,
+        causal_conv=config_cycvae.causal_conv_enc,
         pad_first=True,
-        right_size=config.right_size_enc)
+        right_size=config_cycvae.right_size_enc)
     print(model_encoder_melsp)
     model_decoder_melsp = GRU_SPEC_DECODER(
-        feat_dim=config.lat_dim+config.lat_dim_e,
-        out_dim=config.mel_dim,
-        n_spk=n_spk,
-        aux_dim=n_spk,
-        hidden_layers=config.hidden_layers_dec,
-        hidden_units=config.hidden_units_dec,
-        kernel_size=config.kernel_size_dec,
-        dilation_size=config.dilation_size_dec,
-        causal_conv=config.causal_conv_dec,
+        feat_dim=config_cycvae.lat_dim+config_cycvae.lat_dim_e,
+        excit_dim=config_cycvae.excit_dim,
+        out_dim=config_cycvae.mel_dim,
+        n_spk=(config_cycvae.emb_spk_dim//config_cycvae.n_weight_emb)*config_cycvae.n_weight_emb,
+        hidden_layers=config_cycvae.hidden_layers_dec,
+        hidden_units=config_cycvae.hidden_units_dec,
+        kernel_size=config_cycvae.kernel_size_dec,
+        dilation_size=config_cycvae.dilation_size_dec,
+        causal_conv=config_cycvae.causal_conv_dec,
         pad_first=True,
-        right_size=config.right_size_dec,
+        right_size=config_cycvae.right_size_dec,
         pdf=True,
-        red_dim_upd=config.mel_dim)
+        red_dim=config_cycvae.mel_dim)
     print(model_decoder_melsp)
     model_encoder_excit = GRU_VAE_ENCODER(
-        in_dim=config.mel_dim,
+        in_dim=config_cycvae.mel_dim,
         n_spk=n_spk,
-        lat_dim=config.lat_dim_e,
-        hidden_layers=config.hidden_layers_enc,
-        hidden_units=config.hidden_units_enc,
-        kernel_size=config.kernel_size_enc,
-        dilation_size=config.dilation_size_enc,
-        causal_conv=config.causal_conv_enc,
+        lat_dim=config_cycvae.lat_dim_e,
+        hidden_layers=config_cycvae.hidden_layers_enc,
+        hidden_units=config_cycvae.hidden_units_enc,
+        kernel_size=config_cycvae.kernel_size_enc,
+        dilation_size=config_cycvae.dilation_size_enc,
+        causal_conv=config_cycvae.causal_conv_enc,
         pad_first=True,
-        right_size=config.right_size_enc)
+        right_size=config_cycvae.right_size_enc)
     print(model_encoder_excit)
-    if (config.spkidtr_dim > 0):
-        model_spkidtr = SPKID_TRANSFORM_LAYER(
-            n_spk=n_spk,
-            spkidtr_dim=config.spkidtr_dim)
-        print(model_spkidtr)
-    model_spk = GRU_SPK(
-        n_spk=n_spk,
-        feat_dim=config.lat_dim+config.lat_dim_e,
-        hidden_units=32,
-        kernel_size=config.kernel_size_spk,
-        dilation_size=config.dilation_size_spk,
-        causal_conv=config.causal_conv_spk,
+    model_decoder_excit = GRU_EXCIT_DECODER(
+        feat_dim=config_cycvae.lat_dim_e,
+        cap_dim=config_cycvae.cap_dim,
+        n_spk=(config_cycvae.emb_spk_dim//config_cycvae.n_weight_emb)*config_cycvae.n_weight_emb,
+        hidden_layers=config_cycvae.hidden_layers_lf0,
+        hidden_units=config_cycvae.hidden_units_lf0,
+        kernel_size=config_cycvae.kernel_size_lf0,
+        dilation_size=config_cycvae.dilation_size_lf0,
+        causal_conv=config_cycvae.causal_conv_lf0,
         pad_first=True,
-        right_size=config.right_size_spk,
-        red_dim=config.mel_dim)
-    print(model_spk)
+        right_size=config_cycvae.right_size_lf0,
+        red_dim=config_cycvae.mel_dim)
+    print(model_decoder_excit)
+    model_spkidtr = SPKID_TRANSFORM_LAYER(
+        n_spk=n_spk,
+        emb_dim=config_cycvae.emb_spk_dim,
+        n_weight_emb=config_cycvae.n_weight_emb,
+        conv_emb_flag=True,
+        spkidtr_dim=config_cycvae.spkidtr_dim)
+    print(model_spkidtr)
     model = GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(
-        feat_dim=config.mel_dim,
+        feat_dim=config_cycvae.mel_dim,
         upsampling_factor=config.upsampling_factor,
         hidden_units=config.hidden_units_wave,
         hidden_units_2=config.hidden_units_wave_2,
@@ -221,33 +231,31 @@ def main():
         dilation_size=config.dilation_size_wave,
         n_quantize=config.n_quantize,
         causal_conv=config.causal_conv_wave,
-        right_size=config.right_size_wave,
+        right_size=config.right_size,
         n_bands=config.n_bands,
         pad_first=True,
         mid_dim=config.mid_dim,
+        emb_flag=True,
         lpc=config.lpc)
     print(model)
     device = torch.device("cpu")
-    model_encoder_melsp.load_state_dict(torch.load(args.model, map_location=device)["model_encoder_melsp"])
-    model_decoder_melsp.load_state_dict(torch.load(args.model, map_location=device)["model_decoder_melsp"])
-    model_encoder_excit.load_state_dict(torch.load(args.model, map_location=device)["model_encoder_excit"])
-    if (config.spkidtr_dim > 0):
-        model_spkidtr.load_state_dict(torch.load(args.model, map_location=device)["model_spkidtr"])
-    model_spk.load_state_dict(torch.load(args.model, map_location=device)["model_spk"])
+    model_encoder_melsp.load_state_dict(torch.load(args.model_cycvae, map_location=device)["model_encoder_melsp"])
+    model_decoder_melsp.load_state_dict(torch.load(args.model_cycvae, map_location=device)["model_decoder_melsp"])
+    model_encoder_excit.load_state_dict(torch.load(args.model_cycvae, map_location=device)["model_encoder_excit"])
+    model_decoder_excit.load_state_dict(torch.load(args.model_cycvae, map_location=device)["model_decoder_excit"])
+    model_spkidtr.load_state_dict(torch.load(args.model_cycvae, map_location=device)["model_spkidtr"])
     model.load_state_dict(torch.load(args.model, map_location=device)["model_waveform"])
     model_encoder_melsp.remove_weight_norm()
     model_decoder_melsp.remove_weight_norm()
     model_encoder_excit.remove_weight_norm()
-    if (config.spkidtr_dim > 0):
-        model_spkidtr.remove_weight_norm()
-    model_spk.remove_weight_norm()
+    model_decoder_excit.remove_weight_norm()
+    model_spkidtr.remove_weight_norm()
     model.remove_weight_norm()
     model_encoder_melsp.eval()
     model_decoder_melsp.eval()
     model_encoder_excit.eval()
-    if (config.spkidtr_dim > 0):
-        model_spkidtr.eval()
-    model_spk.eval()
+    model_decoder_excit.eval()
+    model_spkidtr.eval()
     model.eval()
     for param in model_encoder_melsp.parameters():
         param.requires_grad = False
@@ -255,12 +263,11 @@ def main():
         param.requires_grad = False
     for param in model_encoder_excit.parameters():
         param.requires_grad = False
-    if (config.spkidtr_dim > 0):
-        for param in model_spkidtr.parameters():
-            param.requires_grad = False
-    for param in model_spk.parameters():
+    for param in model_decoder_excit.parameters():
         param.requires_grad = False
-    for param in model.parameters():
+    for param in model_spkidtr.parameters():
+        param.requires_grad = False
+    for name, param in model.named_parameters():
         param.requires_grad = False
 
     ## Multiband WaveRNN with data-driven LPC (MWDLP)
@@ -508,71 +515,77 @@ def main():
     weights = model.out.conv.weight.permute(2,1,0)[0].data.numpy() # in x out: 32 x 384 ((6*2*8)*2+6*2*16) [6 bands, 8 lpc]
     bias = model.out.conv.bias.data.numpy()
     factors = (0.5*torch.exp(model.out.fact.weight[0])).data.numpy()
-    mid_out2 = model.mid_out*2
+    ## [NBx2x(K+K+16] --> [2x(K+K+16)xNB]
+    ## [[K,K,16]_1a,[K,K,16]_1b,...,[K,K,16]_NBa,[K,K,16]_NBb]
     if model.lpc > 0:
-        ## permute weights and bias out structure from [NBx2xK,NBx2xK,NBx2x16] to [NBxK,NBxK,NBx16,NBxK,NBxK,NBx16]
+        ## permute weights and bias out structure from [NBx2x(K+K+16)] to [2x(K+K+16)xNB]
         lpc2 = model.lpc*2
-        lpc2bands = model.lpc*2*model.n_bands
-        lpc3bands = model.lpc*3*model.n_bands
-        lpc4bands = model.lpc*4*model.n_bands
-        lpc2midbands = (model.lpc*2+model.mid_out)*model.n_bands
-        lpc3midbands = (model.lpc*3+model.mid_out)*model.n_bands
-        lpc4midbands = (model.lpc*4+model.mid_out)*model.n_bands
-        bias_signs = bias[:lpc2bands]
-        bias_mags = bias[lpc2bands:lpc4bands]
-        bias_mids = bias[lpc4bands:]
-        bias_signs_1 = bias_signs[:model.lpc]
-        bias_signs_2 = bias_signs[model.lpc:lpc2]
-        bias_mags_1 = bias_mags[:model.lpc]
-        bias_mags_2 = bias_mags[model.lpc:lpc2]
-        bias_mids_1 = bias_mids[:model.mid_out]
-        bias_mids_2 = bias_mids[model.mid_out:mid_out2]
+        lpc2mid = lpc2+model.mid_out
+        lpc3mid = lpc2mid+model.lpc
+        lpc4mid = lpc3mid+model.lpc
+        lpc4mid2 = lpc4mid+model.mid_out
+        #bias_signs_1 = bias[:lpc]
+        #bias_mags_1 = bias[lpc:lpc2]
+        #bias_mids_1 = bias[lpc2:lpc2mid]
+        bias_1 = bias[:lpc2mid]
+        #bias_signs_2 = bias[lpc2mid:lpc3mid]
+        #bias_mags_2 = bias[lpc3mid:lpc4mid]
+        #bias_mids_2 = bias[lpc4mid:lpc4mid2]
+        bias_2 = bias[lpc2mid:lpc4mid2]
         for i in range(1,model.n_bands):
-            idx = lpc2*i
-            idx_ = idx+model.lpc
-            bias_signs_1 = np.r_[bias_signs_1, bias_signs[idx:idx_]]
-            bias_signs_2 = np.r_[bias_signs_2, bias_signs[idx_:lpc2*(i+1)]]
-            bias_mags_1 = np.r_[bias_mags_1, bias_mags[idx:idx_]]
-            bias_mags_2 = np.r_[bias_mags_2, bias_mags[idx_:lpc2*(i+1)]]
-            idx = mid_out2*i
-            idx_ = idx+model.mid_out
-            bias_mids_1 = np.r_[bias_mids_1, bias_mids[idx:idx_]]
-            bias_mids_2 = np.r_[bias_mids_2, bias_mids[idx_:mid_out2*(i+1)]]
-        bias = np.r_[bias_signs_1, bias_mags_1, bias_mids_1, bias_signs_2, bias_mags_2, bias_mids_2]
-        weights_signs = weights[:,:lpc2bands]
-        weights_mags = weights[:,lpc2bands:lpc4bands]
-        weights_mids = weights[:,lpc4bands:]
-        weights_signs_1 = weights_signs[:,:model.lpc]
-        weights_signs_2 = weights_signs[:,model.lpc:lpc2]
-        weights_mags_1 = weights_mags[:,:model.lpc]
-        weights_mags_2 = weights_mags[:,model.lpc:lpc2]
-        weights_mids_1 = weights_mids[:,:model.mid_out]
-        weights_mids_2 = weights_mids[:,model.mid_out:mid_out2]
+            idx = lpc4mid2*i
+            #bias_signs_1 = np.r_[bias_signs_1, bias[idx:idx+lpc]]
+            #bias_mags_1 = np.r_[bias_mags_1, bias[idx+lpc:idx+lpc2]]
+            #bias_mids_1 = np.r_[bias_mids_1, bias[idx+lpc2:idx+lpc2mid]]
+            bias_1 = np.r_[bias_1, bias[idx:idx+lpc2mid]]
+            #bias_signs_2 = np.r_[bias_signs_2, bias[idx+lpc2mid:idx+lpc3mid]]
+            #bias_mags_2 = np.r_[bias_mags_2, bias[idx+lpc3mid:idx+lpc4mid]]
+            #bias_mids_2 = np.r_[bias_mids_2, bias[idx+lpc4mid:idx+lpc4mid2]]
+            bias_2 = np.r_[bias_2, bias[idx+lpc2mid:idx+lpc4mid2]]
+        #bias = np.r_[bias_signs_1, bias_mags_1, bias_mids_1, bias_signs_2, bias_mags_2, bias_mids_2]
+        bias = np.r_[bias_1, bias_2]
+        #weights_signs_1 = weights[:,:lpc]
+        #weights_mags_1 = weights[:,lpc:lpc2]
+        #weights_mids_1 = weights[:,lpc2:lpc2mid]
+        weights_1 = weights[:,:lpc2mid]
+        #weights_signs_2 = weights[:,lpc2mid:lpc3mid]
+        #weights_mags_2 = weights[:,lpc3mid:lpc4mid]
+        #weights_mids_2 = weights[:,lpc4mid:lpc4mid2]
+        weights_2 = weights[:,lpc2mid:lpc4mid2]
         for i in range(1,model.n_bands):
-            idx = lpc2*i
-            idx_ = idx+model.lpc
-            weights_signs_1 = np.c_[weights_signs_1, weights_signs[:,idx:idx_]]
-            weights_signs_2 = np.c_[weights_signs_2, weights_signs[:,idx_:lpc2*(i+1)]]
-            weights_mags_1 = np.c_[weights_mags_1, weights_mags[:,idx:idx_]]
-            weights_mags_2 = np.c_[weights_mags_2, weights_mags[:,idx_:lpc2*(i+1)]]
-            idx = mid_out2*i
-            idx_ = idx+model.mid_out
-            weights_mids_1 = np.c_[weights_mids_1, weights_mids[:,idx:idx_]]
-            weights_mids_2 = np.c_[weights_mids_2, weights_mids[:,idx_:mid_out2*(i+1)]]
-        weights = np.c_[weights_signs_1, weights_mags_1, weights_mids_1, weights_signs_2, weights_mags_2, weights_mids_2]
-        # change factors structure from [LPC_signs,LPC_signs,LPG_mags,LPC_mags,mid_logits,mid_logits]
-        #                          into [LPC_signs,LPC_mags,mid_logits,LPC_signs,LPC_mags,mid_logits]
-        factors_signs = factors[:lpc2bands].reshape(model.n_bands,2,model.lpc)
-        factors_signs_1 = factors_signs[:,0].reshape(-1)
-        factors_signs_2 = factors_signs[:,1].reshape(-1)
-        factors_mags = factors[lpc2bands:lpc4bands].reshape(model.n_bands,2,model.lpc)
-        factors_mags_1 = factors_mags[:,0].reshape(-1)
-        factors_mags_2 = factors_mags[:,1].reshape(-1)
-        factors_mids = factors[lpc4bands:].reshape(model.n_bands,2,model.mid_out)
-        factors_mids_1 = factors_mids[:,0].reshape(-1)
-        factors_mids_2 = factors_mids[:,1].reshape(-1)
-        factors = np.r_[factors_signs_1, factors_mags_1, factors_mids_1, factors_signs_2, factors_mags_2, factors_mids_2]
+            idx = lpc4mid2*i
+            #weights_signs_1 = np.c_[weights_signs_1, weights[:,idx:idx+lpc]]
+            #weights_mags_1 = np.c_[weights_mags_1, weights[:,idx+lpc:idx+lpc2]]
+            #weights_mids_1 = np.c_[weights_mids_1, weights[:,idx+lpc2:idx+lpc2mid]]
+            weights_1 = np.c_[weights_1, weights[:,idx:idx+lpc2mid]]
+            #weights_signs_2 = np.c_[weights_signs_2, weights[:,idx+lpc2mid:idx+lpc3mid]]
+            #weights_mags_2 = np.c_[weights_mags_2, weights[:,idx+lpc3mid:idx+lpc4mid]]
+            #weights_mids_2 = np.c_[weights_mids_2, weights[:,idx+lpc4mid:idx+lpc4mid2]]
+            weights_2 = np.c_[weights_2, weights[:,idx+lpc2mid:idx+lpc4mid2]]
+        #weights = np.c_[weights_signs_1, weights_mags_1, weights_mids_1, weights_signs_2, weights_mags_2, weights_mids_2]
+        weights = np.c_[weights_1, weights_2]
+        #factors_signs_1 = factors[:lpc]
+        #factors_mags_1 = factors[lpc:lpc2]
+        #factors_mids_1 = factors[lpc2:lpc2mid]
+        factors_1 = factors[:lpc2mid]
+        #factors_signs_2 = factors[lpc2mid:lpc3mid]
+        #factors_mags_2 = factors[lpc3mid:lpc4mid]
+        #factors_mids_2 = factors[lpc4mid:lpc4mid2]
+        factors_2 = factors[lpc2mid:lpc4mid2]
+        for i in range(1,model.n_bands):
+            idx = lpc4mid2*i
+            #factors_signs_1 = np.r_[factors_signs_1, factors[idx:idx+lpc]]
+            #factors_mags_1 = np.r_[factors_mags_1, factors[idx+lpc:idx+lpc2]]
+            #factors_mids_1 = np.r_[factors_mids_1, factors[idx+lpc2:idx+lpc2mid]]
+            factors_1 = np.r_[factors_1, factors[idx:idx+lpc2mid]]
+            #factors_signs_2 = np.r_[factors_signs_2, factors[idx+lpc2mid:idx+lpc3mid]]
+            #factors_mags_2 = np.r_[factors_mags_2, factors[idx+lpc3mid:idx+lpc4mid]]
+            #factors_mids_2 = np.r_[factors_mids_2, factors[idx+lpc4mid:idx+lpc4mid2]]
+            factors_2 = np.r_[factors_2, factors[idx+lpc2mid:idx+lpc4mid2]]
+        #factors = np.r_[factors_signs_1, factors_mags_1, factors_mids_1, factors_signs_2, factors_mags_2, factors_mids_2]
+        factors = np.r_[factors_1, factors_2]
     else:
+        mid_out2 = model.mid_out*2
         ## permute weights and bias out structure from [NBx2x16] to [NBx16x2]
         bias_mids = bias
         bias_mids_1 = bias_mids[:model.mid_out]
@@ -604,8 +617,7 @@ def main():
     #printVector(f, factors[model.out.lpc4bands:], name + '_factor_mids')
     printVector(f, factors, name + '_factors')
     f.write('const MDenseLayerMWDLP10 {} = {{\n   {}_bias,\n   {}_weights,\n   {}_factors,\n   '\
-        'ACTIVATION_TANH_EXP, ACTIVATION_EXP, ACTIVATION_RELU\n}};\n\n'.format(name, name, name, name))
-    #    'ACTIVATION_TANH, ACTIVATION_EXP, ACTIVATION_RELU\n}};\n\n'.format(name, name, name, name))
+        'ACTIVATION_RELU, ACTIVATION_TANH_EXP, ACTIVATION_EXP, ACTIVATION_TANHSHRINK\n}};\n\n'.format(name, name, name, name))
     hf.write('extern const MDenseLayerMWDLP10 {};\n\n'.format(name))
 
     #dump dense_fc_out_coarse
@@ -615,7 +627,7 @@ def main():
     bias = model.out.out.bias.data.numpy()
     printVector(f, weights, name + '_weights')
     printVector(f, bias, name + '_bias')
-    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_TANHSHRINK\n}};\n\n'
+    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_LINEAR\n}};\n\n'
             .format(name, name, name, weights.shape[0], weights.shape[1]))
     hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
     hf.write('extern const DenseLayer {};\n\n'.format(name))
@@ -626,63 +638,77 @@ def main():
     weights = model.out_f.conv.weight.permute(2,1,0)[0].data.numpy()
     bias = model.out_f.conv.bias.data.numpy()
     factors = (0.5*torch.exp(model.out_f.fact.weight[0])).data.numpy()
+    ## [NBx2x(K+K+16] --> [2x(K+K+16)xNB]
+    ## [[K,K,16]_1a,[K,K,16]_1b,...,[K,K,16]_NBa,[K,K,16]_NBb]
     if model.lpc > 0:
-        ## permute weights and bias out structure from [NBx2xK,NBx2xK,NBx2x16] to [NBxK,NBxK,NBx16,NBxK,NBxK,NBx16]
-        bias_signs = bias[:lpc2bands]
-        bias_mags = bias[lpc2bands:lpc4bands]
-        bias_mids = bias[lpc4bands:]
-        bias_signs_1 = bias_signs[:model.lpc]
-        bias_signs_2 = bias_signs[model.lpc:lpc2]
-        bias_mags_1 = bias_mags[:model.lpc]
-        bias_mags_2 = bias_mags[model.lpc:lpc2]
-        bias_mids_1 = bias_mids[:model.mid_out]
-        bias_mids_2 = bias_mids[model.mid_out:mid_out2]
+        ## permute weights and bias out structure from [NBx2x(K+K+16)] to [2x(K+K+16)xNB]
+        lpc2 = model.lpc*2
+        lpc2mid = lpc2+model.mid_out
+        lpc3mid = lpc2mid+model.lpc
+        lpc4mid = lpc3mid+model.lpc
+        lpc4mid2 = lpc4mid+model.mid_out
+        #bias_signs_1 = bias[:lpc]
+        #bias_mags_1 = bias[lpc:lpc2]
+        #bias_mids_1 = bias[lpc2:lpc2mid]
+        bias_1 = bias[:lpc2mid]
+        #bias_signs_2 = bias[lpc2mid:lpc3mid]
+        #bias_mags_2 = bias[lpc3mid:lpc4mid]
+        #bias_mids_2 = bias[lpc4mid:lpc4mid2]
+        bias_2 = bias[lpc2mid:lpc4mid2]
         for i in range(1,model.n_bands):
-            idx = lpc2*i
-            idx_ = idx+model.lpc
-            bias_signs_1 = np.r_[bias_signs_1, bias_signs[idx:idx_]]
-            bias_signs_2 = np.r_[bias_signs_2, bias_signs[idx_:lpc2*(i+1)]]
-            bias_mags_1 = np.r_[bias_mags_1, bias_mags[idx:idx_]]
-            bias_mags_2 = np.r_[bias_mags_2, bias_mags[idx_:lpc2*(i+1)]]
-            idx = mid_out2*i
-            idx_ = idx+model.mid_out
-            bias_mids_1 = np.r_[bias_mids_1, bias_mids[idx:idx_]]
-            bias_mids_2 = np.r_[bias_mids_2, bias_mids[idx_:mid_out2*(i+1)]]
-        bias = np.r_[bias_signs_1, bias_mags_1, bias_mids_1, bias_signs_2, bias_mags_2, bias_mids_2]
-        weights_signs = weights[:,:lpc2bands]
-        weights_mags = weights[:,lpc2bands:lpc4bands]
-        weights_mids = weights[:,lpc4bands:]
-        weights_signs_1 = weights_signs[:,:model.lpc]
-        weights_signs_2 = weights_signs[:,model.lpc:lpc2]
-        weights_mags_1 = weights_mags[:,:model.lpc]
-        weights_mags_2 = weights_mags[:,model.lpc:lpc2]
-        weights_mids_1 = weights_mids[:,:model.mid_out]
-        weights_mids_2 = weights_mids[:,model.mid_out:mid_out2]
+            idx = lpc4mid2*i
+            #bias_signs_1 = np.r_[bias_signs_1, bias[idx:idx+lpc]]
+            #bias_mags_1 = np.r_[bias_mags_1, bias[idx+lpc:idx+lpc2]]
+            #bias_mids_1 = np.r_[bias_mids_1, bias[idx+lpc2:idx+lpc2mid]]
+            bias_1 = np.r_[bias_1, bias[idx:idx+lpc2mid]]
+            #bias_signs_2 = np.r_[bias_signs_2, bias[idx+lpc2mid:idx+lpc3mid]]
+            #bias_mags_2 = np.r_[bias_mags_2, bias[idx+lpc3mid:idx+lpc4mid]]
+            #bias_mids_2 = np.r_[bias_mids_2, bias[idx+lpc4mid:idx+lpc4mid2]]
+            bias_2 = np.r_[bias_2, bias[idx+lpc2mid:idx+lpc4mid2]]
+        #bias = np.r_[bias_signs_1, bias_mags_1, bias_mids_1, bias_signs_2, bias_mags_2, bias_mids_2]
+        bias = np.r_[bias_1, bias_2]
+        #weights_signs_1 = weights[:,:lpc]
+        #weights_mags_1 = weights[:,lpc:lpc2]
+        #weights_mids_1 = weights[:,lpc2:lpc2mid]
+        weights_1 = weights[:,:lpc2mid]
+        #weights_signs_2 = weights[:,lpc2mid:lpc3mid]
+        #weights_mags_2 = weights[:,lpc3mid:lpc4mid]
+        #weights_mids_2 = weights[:,lpc4mid:lpc4mid2]
+        weights_2 = weights[:,lpc2mid:lpc4mid2]
         for i in range(1,model.n_bands):
-            idx = lpc2*i
-            idx_ = idx+model.lpc
-            weights_signs_1 = np.c_[weights_signs_1, weights_signs[:,idx:idx_]]
-            weights_signs_2 = np.c_[weights_signs_2, weights_signs[:,idx_:lpc2*(i+1)]]
-            weights_mags_1 = np.c_[weights_mags_1, weights_mags[:,idx:idx_]]
-            weights_mags_2 = np.c_[weights_mags_2, weights_mags[:,idx_:lpc2*(i+1)]]
-            idx = mid_out2*i
-            idx_ = idx+model.mid_out
-            weights_mids_1 = np.c_[weights_mids_1, weights_mids[:,idx:idx_]]
-            weights_mids_2 = np.c_[weights_mids_2, weights_mids[:,idx_:mid_out2*(i+1)]]
-        weights = np.c_[weights_signs_1, weights_mags_1, weights_mids_1, weights_signs_2, weights_mags_2, weights_mids_2]
-        # change factors structure from [LPC_signs,LPC_signs,LPG_mags,LPC_mags,mid_logits,mid_logits]
-        #                          into [LPC_signs,LPC_mags,mid_logits,LPC_signs,LPC_mags,mid_logits]
-        factors_signs = factors[:lpc2bands].reshape(model.n_bands,2,model.lpc)
-        factors_signs_1 = factors_signs[:,0].reshape(-1)
-        factors_signs_2 = factors_signs[:,1].reshape(-1)
-        factors_mags = factors[lpc2bands:lpc4bands].reshape(model.n_bands,2,model.lpc)
-        factors_mags_1 = factors_mags[:,0].reshape(-1)
-        factors_mags_2 = factors_mags[:,1].reshape(-1)
-        factors_mids = factors[lpc4bands:].reshape(model.n_bands,2,model.mid_out)
-        factors_mids_1 = factors_mids[:,0].reshape(-1)
-        factors_mids_2 = factors_mids[:,1].reshape(-1)
-        factors = np.r_[factors_signs_1, factors_mags_1, factors_mids_1, factors_signs_2, factors_mags_2, factors_mids_2]
+            idx = lpc4mid2*i
+            #weights_signs_1 = np.c_[weights_signs_1, weights[:,idx:idx+lpc]]
+            #weights_mags_1 = np.c_[weights_mags_1, weights[:,idx+lpc:idx+lpc2]]
+            #weights_mids_1 = np.c_[weights_mids_1, weights[:,idx+lpc2:idx+lpc2mid]]
+            weights_1 = np.c_[weights_1, weights[:,idx:idx+lpc2mid]]
+            #weights_signs_2 = np.c_[weights_signs_2, weights[:,idx+lpc2mid:idx+lpc3mid]]
+            #weights_mags_2 = np.c_[weights_mags_2, weights[:,idx+lpc3mid:idx+lpc4mid]]
+            #weights_mids_2 = np.c_[weights_mids_2, weights[:,idx+lpc4mid:idx+lpc4mid2]]
+            weights_2 = np.c_[weights_2, weights[:,idx+lpc2mid:idx+lpc4mid2]]
+        #weights = np.c_[weights_signs_1, weights_mags_1, weights_mids_1, weights_signs_2, weights_mags_2, weights_mids_2]
+        weights = np.c_[weights_1, weights_2]
+        #factors_signs_1 = factors[:lpc]
+        #factors_mags_1 = factors[lpc:lpc2]
+        #factors_mids_1 = factors[lpc2:lpc2mid]
+        factors_1 = factors[:lpc2mid]
+        #factors_signs_2 = factors[lpc2mid:lpc3mid]
+        #factors_mags_2 = factors[lpc3mid:lpc4mid]
+        #factors_mids_2 = factors[lpc4mid:lpc4mid2]
+        factors_2 = factors[lpc2mid:lpc4mid2]
+        for i in range(1,model.n_bands):
+            idx = lpc4mid2*i
+            #factors_signs_1 = np.r_[factors_signs_1, factors[idx:idx+lpc]]
+            #factors_mags_1 = np.r_[factors_mags_1, factors[idx+lpc:idx+lpc2]]
+            #factors_mids_1 = np.r_[factors_mids_1, factors[idx+lpc2:idx+lpc2mid]]
+            factors_1 = np.r_[factors_1, factors[idx:idx+lpc2mid]]
+            #factors_signs_2 = np.r_[factors_signs_2, factors[idx+lpc2mid:idx+lpc3mid]]
+            #factors_mags_2 = np.r_[factors_mags_2, factors[idx+lpc3mid:idx+lpc4mid]]
+            #factors_mids_2 = np.r_[factors_mids_2, factors[idx+lpc4mid:idx+lpc4mid2]]
+            factors_2 = np.r_[factors_2, factors[idx+lpc2mid:idx+lpc4mid2]]
+        #factors = np.r_[factors_signs_1, factors_mags_1, factors_mids_1, factors_signs_2, factors_mags_2, factors_mids_2]
+        factors = np.r_[factors_1, factors_2]
     else:
+        mid_out2 = model.mid_out*2
         ## permute weights and bias out structure from [NBx2x16] to [NBx16x2]
         bias_mids = bias
         bias_mids_1 = bias_mids[:model.mid_out]
@@ -714,8 +740,7 @@ def main():
     #printVector(f, factors[model.out_f.lpc4bands:], name + '_factor_mids')
     printVector(f, factors, name + '_factors')
     f.write('const MDenseLayerMWDLP10 {} = {{\n   {}_bias,\n   {}_weights,\n   {}_factors,\n   '\
-        'ACTIVATION_TANH_EXP, ACTIVATION_EXP, ACTIVATION_RELU\n}};\n\n'.format(name, name, name, name))
-    #    'ACTIVATION_TANH, ACTIVATION_EXP, ACTIVATION_RELU\n}};\n\n'.format(name, name, name, name))
+        'ACTIVATION_RELU, ACTIVATION_TANH_EXP, ACTIVATION_EXP, ACTIVATION_TANHSHRINK\n}};\n\n'.format(name, name, name, name))
     hf.write('extern const MDenseLayerMWDLP10 {};\n\n'.format(name))
 
     #dump dense_fc_out_fine
@@ -725,10 +750,38 @@ def main():
     bias = model.out_f.out.bias.data.numpy()
     printVector(f, weights, name + '_weights')
     printVector(f, bias, name + '_bias')
-    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_TANHSHRINK\n}};\n\n'
+    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_LINEAR\n}};\n\n'
             .format(name, name, name, weights.shape[0], weights.shape[1]))
     hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
     hf.write('extern const DenseLayer {};\n\n'.format(name))
+
+    if config.lpc > 0:
+        #previous logits embedding coarse and fine
+        #logits_c = (torch.tanh(model.logits_sgns_c.weight)*torch.exp(model.logits_mags_c.weight)).data.numpy()
+        #logits_f = (torch.tanh(model.logits_sgns_f.weight)*torch.exp(model.logits_mags_f.weight)).data.numpy()
+        logits_c = model.logits_c.weight.data.numpy()
+        logits_f = model.logits_f.weight.data.numpy()
+    else:
+        #previous logits embedding coarse and fine
+        logits_c = np.zeros((model.cf_dim, 1))
+        logits_f = np.zeros((model.cf_dim, 1))
+
+    #dump previous logits coarse
+    name = 'prev_logits_coarse'
+    print("printing layer " + name)
+    printVector(f, logits_c, name + '_weights')
+    f.write('const EmbeddingLayer {} = {{\n   {}_weights,\n   {}, {}\n}};\n\n'
+            .format(name, name, logits_c.shape[0], logits_c.shape[1]))
+    hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), logits_c.shape[1]))
+    hf.write('extern const EmbeddingLayer {};\n\n'.format(name))
+    #dump previous logits fine
+    name = 'prev_logits_fine'
+    print("printing layer " + name)
+    printVector(f, logits_f, name + '_weights')
+    f.write('const EmbeddingLayer {} = {{\n   {}_weights,\n   {}, {}\n}};\n\n'
+            .format(name, name, logits_f.shape[0], logits_f.shape[1]))
+    hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), logits_f.shape[1]))
+    hf.write('extern const EmbeddingLayer {};\n\n'.format(name))
 
     #dump pqmf_synthesis filt
     name = "pqmf_synthesis"
@@ -799,12 +852,25 @@ def main():
             .format(name, name, name, bias.shape[0]))
     hf.write('extern const NormStats {};\n\n'.format(name))
 
-    ## Dump in_red spk
-    name = 'fc_red_spk'
+    ## Dump uvf0_norm
+    name = 'uvf0_norm'
+    print("printing layer " + name + " of type " + model_decoder_melsp.scale_in.__class__.__name__)
+    weights = model_decoder_melsp.scale_in.weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_decoder_melsp.scale_in.bias.data.numpy()
+    std = 1.0/np.diag(weights)[:1] #in training script, diagonal square weights matrix defined as 1/std
+    mean = (-bias[:1])*std #in training script, bias defined as -mean/std
+    printVector(f, mean, name + '_mean')
+    printVector(f, std, name + '_std')
+    f.write('const NormStats {} = {{\n   {}_mean,\n   {}_std,\n   {}\n}};\n\n'
+            .format(name, name, name, mean.shape[0]))
+    hf.write('extern const NormStats {};\n\n'.format(name))
+
+    ## Dump in_red dec_excit
+    name = 'fc_red_dec_excit'
     print("printing layer " + name)
     #defined as sequential with relu activation
-    weights = model_spk.in_red[0].weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
-    bias = model_spk.in_red[0].bias.data.numpy()
+    weights = model_decoder_excit.in_red[0].weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_decoder_excit.in_red[0].bias.data.numpy()
     printVector(f, weights, name + '_weights')
     printVector(f, bias, name + '_bias')
     f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_RELU\n}};\n\n'
@@ -816,8 +882,8 @@ def main():
     name = 'fc_red_dec_melsp'
     print("printing layer " + name)
     #defined as sequential with relu activation
-    weights = model_decoder_melsp.in_red_upd[0].weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
-    bias = model_decoder_melsp.in_red_upd[0].bias.data.numpy()
+    weights = model_decoder_melsp.in_red[0].weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_decoder_melsp.in_red[0].bias.data.numpy()
     printVector(f, weights, name + '_weights')
     printVector(f, bias, name + '_bias')
     f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_RELU\n}};\n\n'
@@ -875,25 +941,25 @@ def main():
     ## Same conv out size for melsp and excit encoders
     assert(enc_melsp_state_size == enc_excit_state_size)
 
-    ## Dump conv_in spk
-    name = "feature_conv_spk"
+    ## Dump conv_in dec_excit
+    name = "feature_conv_dec_excit"
     #FIXME: make model format without sequential for two-sided/causal conv
-    if model_spk.right_size <= 0:
-        print("printing layer " + name + " of type " + model_spk.conv.conv[0].__class__.__name__)
-        weights = model_spk.conv.conv[0].weight.permute(2,1,0).data.numpy()
-        bias = model_spk.conv.conv[0].bias.data.numpy()
+    if model_decoder_excit.right_size <= 0:
+        print("printing layer " + name + " of type " + model_decoder_excit.conv.conv[0].__class__.__name__)
+        weights = model_decoder_excit.conv.conv[0].weight.permute(2,1,0).data.numpy()
+        bias = model_decoder_excit.conv.conv[0].bias.data.numpy()
     else:
-        print("printing layer " + name + " of type " + model_spk.conv.conv.__class__.__name__)
-        weights = model_spk.conv.conv.weight.permute(2,1,0).data.numpy()
-        bias = model_spk.conv.conv.bias.data.numpy()
+        print("printing layer " + name + " of type " + model_decoder_excit.conv.conv.__class__.__name__)
+        weights = model_decoder_excit.conv.conv.weight.permute(2,1,0).data.numpy()
+        bias = model_decoder_excit.conv.conv.bias.data.numpy()
     printVector(f, weights, name + '_weights')
     printVector(f, bias, name + '_bias')
     f.write('const Conv1DLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, {}, ACTIVATION_LINEAR\n}};\n\n'
             .format(name, name, name, weights.shape[1], weights.shape[0], weights.shape[2]))
     hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[2]))
     hf.write('#define {}_STATE_SIZE ({}*{})\n'.format(name.upper(), weights.shape[1],
-        model_spk.pad_left+1+model_spk.pad_right-1))
-    hf.write('#define {}_DELAY {}\n'.format(name.upper(), model_spk.pad_right))
+        model_decoder_excit.pad_left+1+model_decoder_excit.pad_right-1))
+    hf.write('#define {}_DELAY {}\n'.format(name.upper(), model_decoder_excit.pad_right))
     hf.write('extern const Conv1DLayer {};\n\n'.format(name))
 
     ## Dump conv_in dec_melsp
@@ -965,13 +1031,13 @@ def main():
     hf.write('#define {}_STATE_SIZE {}\n'.format(name.upper(), weights_hh.shape[1]//3))
     hf.write('extern const SparseFrameGRULayer {};\n\n'.format(name))
 
-    #dump dense_gru_spk
-    name = "gru_spk"
-    print("printing layer " + name + " of type " + model_spk.gru.__class__.__name__)
-    weights_ih = model_spk.gru.weight_ih_l0.transpose(0,1).data.numpy()
-    weights_hh = model_spk.gru.weight_hh_l0.transpose(0,1).data.numpy()
-    bias_ih = model_spk.gru.bias_ih_l0
-    bias_hh = model_spk.gru.bias_hh_l0
+    #dump dense_gru_dec_excit
+    name = "gru_dec_excit"
+    print("printing layer " + name + " of type " + model_decoder_excit.gru.__class__.__name__)
+    weights_ih = model_decoder_excit.gru.weight_ih_l0.transpose(0,1).data.numpy()
+    weights_hh = model_decoder_excit.gru.weight_hh_l0.transpose(0,1).data.numpy()
+    bias_ih = model_decoder_excit.gru.bias_ih_l0
+    bias_hh = model_decoder_excit.gru.bias_hh_l0
     printVector(f, weights_ih, name + '_input_weights')
     printVector(f, weights_hh, name + '_recurrent_weights')
     printVector(f, bias_ih, name + '_input_bias')
@@ -1042,14 +1108,26 @@ def main():
     hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
     hf.write('extern const DenseLayer {};\n\n'.format(name))
 
-    #dump fc_out_spk
-    name = 'fc_out_spk'
+    #embed_spk
+    embed_spk = model_spkidtr.embed_spk.weight.data.numpy()
+
+    #dump embed_spk
+    name = 'embed_spk'
     print("printing layer " + name)
-    weights = model_spk.out.weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
-    bias = model_spk.out.bias.data.numpy()
+    printVector(f, embed_spk, name + '_weights')
+    f.write('const EmbeddingLayer {} = {{\n   {}_weights,\n   {}, {}\n}};\n\n'
+            .format(name, name, embed_spk.shape[0], embed_spk.shape[1]))
+    hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), embed_spk.shape[1]))
+    hf.write('extern const EmbeddingLayer {};\n\n'.format(name))
+
+    #dump fc_out_dec_excit
+    name = 'fc_out_dec_excit'
+    print("printing layer " + name)
+    weights = model_decoder_excit.out.weight.permute(2,1,0)[0,:,:2].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_decoder_excit.out.bias[:2].data.numpy()
     printVector(f, weights, name + '_weights')
     printVector(f, bias, name + '_bias')
-    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_TANHSHRINK\n}};\n\n'
+    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_LINEAR\n}};\n\n'
             .format(name, name, name, weights.shape[0], weights.shape[1]))
     hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
     hf.write('extern const DenseLayer {};\n\n'.format(name))
@@ -1068,53 +1146,66 @@ def main():
     hf.write('extern const DenseLayer {};\n\n'.format(name))
 
     #dump spk-code_transform
-    if (config.spkidtr_dim > 0):
-        name = 'fc_in_spk_code_transform'
-        print("printing layer " + name)
-        weights = model_spkidtr.conv.weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
-        bias = model_spkidtr.conv.bias.data.numpy()
-        printVector(f, weights, name + '_weights')
-        printVector(f, bias, name + '_bias')
-        f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_TANHSHRINK\n}};\n\n'
-                .format(name, name, name, weights.shape[0], weights.shape[1]))
-        hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
-        hf.write('extern const DenseLayer {};\n\n'.format(name))
+    name = 'fc_in_spk_code'
+    print("printing layer " + name)
+    #defined as sequential with relu activation
+    weights = model_spkidtr.conv_emb[0].weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_spkidtr.conv_emb[0].bias.data.numpy()
+    printVector(f, weights, name + '_weights')
+    printVector(f, bias, name + '_bias')
+    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_RELU\n}};\n\n'
+            .format(name, name, name, weights.shape[0], weights.shape[1]))
+    hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
+    hf.write('extern const DenseLayer {};\n\n'.format(name))
 
-        name = 'fc_out_spk_code_transform'
-        print("printing layer " + name)
-        #defined as sequential with relu activation
-        weights = model_spkidtr.deconv[0].weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
-        bias = model_spkidtr.deconv[0].bias.data.numpy()
-        printVector(f, weights, name + '_weights')
-        printVector(f, bias, name + '_bias')
-        f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_RELU\n}};\n\n'
-                .format(name, name, name, weights.shape[0], weights.shape[1]))
-        hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
-        hf.write('extern const DenseLayer {};\n\n'.format(name))
+    name = 'fc_in_spk_code_transform'
+    print("printing layer " + name)
+    weights = model_spkidtr.conv.weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_spkidtr.conv.bias.data.numpy()
+    printVector(f, weights, name + '_weights')
+    printVector(f, bias, name + '_bias')
+    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_TANHSHRINK\n}};\n\n'
+            .format(name, name, name, weights.shape[0], weights.shape[1]))
+    hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
+    hf.write('extern const DenseLayer {};\n\n'.format(name))
+
+    name = 'fc_out_spk_code_transform'
+    print("printing layer " + name)
+    weights = model_spkidtr.deconv.weight.permute(2,1,0)[0].data.numpy() #it's defined as conv1d with ks=1 on the model
+    bias = model_spkidtr.deconv.bias.data.numpy()
+    printVector(f, weights, name + '_weights')
+    printVector(f, bias, name + '_bias')
+    f.write('const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_TANH_EXP\n}};\n\n'
+            .format(name, name, name, weights.shape[0], weights.shape[1]))
+    hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[1]))
+    hf.write('extern const DenseLayer {};\n\n'.format(name))
 
     hf.write('#define RNN_ENC_MELSP_NEURONS {}\n\n'.format(model_encoder_melsp.hidden_units))
     hf.write('#define RNN_ENC_EXCIT_NEURONS {}\n\n'.format(model_encoder_excit.hidden_units))
-    hf.write('#define RNN_SPK_NEURONS {}\n\n'.format(model_spk.hidden_units))
     hf.write('#define RNN_DEC_MELSP_NEURONS {}\n\n'.format(model_decoder_melsp.hidden_units))
+    hf.write('#define RNN_DEC_EXCIT_NEURONS {}\n\n'.format(model_decoder_excit.hidden_units))
     hf.write('#define FEATURE_DIM_MELSP {}\n\n'.format(model_decoder_melsp.spec_dim))
     hf.write('#define FEATURE_LAT_DIM_MELSP {}\n\n'.format(model_encoder_melsp.lat_dim))
     hf.write('#define FEATURE_LAT_DIM_EXCIT {}\n\n'.format(model_encoder_excit.lat_dim))
-    hf.write('#define FEATURE_N_SPK {}\n\n'.format(model_decoder_melsp.n_spk))
-    hf.write('#define FEATURE_RED_DIM {}\n\n'.format(model_decoder_melsp.red_dim_upd))
+    hf.write('#define FEATURE_N_SPK {}\n\n'.format(n_spk))
+    hf.write('#define FEATURE_SPK_DIM {}\n\n'.format(model_spkidtr.emb_dim))
+    hf.write('#define FEATURE_N_WEIGHT_EMBED_SPK {}\n\n'.format(model_spkidtr.n_weight_emb))
+    hf.write('#define FEATURE_DIM_EMBED_SPK {}\n\n'.format(model_spkidtr.dim_weight_emb))
+    hf.write('#define FEATURE_RED_DIM {}\n\n'.format(model_decoder_melsp.red_dim))
     hf.write('#define FEATURE_CONV_ENC_STATE_SIZE {}\n\n'.format(enc_melsp_state_size))
-    hf.write('#define FEATURE_CONV_VC_DELAY {}\n\n'.format(model_encoder_melsp.pad_right+model_spk.pad_right+model_decoder_melsp.pad_right))
+    hf.write('#define FEATURE_CONV_VC_DELAY {}\n\n'.format(model_encoder_melsp.pad_right+model_decoder_excit.pad_right+model_decoder_melsp.pad_right))
     hf.write('#define ENC_CONV_KERNEL_1 {}\n\n'.format(model_encoder_melsp.kernel_size-1))
-    hf.write('#define SPK_CONV_KERNEL_1 {}\n\n'.format(model_spk.kernel_size-1))
+    hf.write('#define DEC_EXCIT_CONV_KERNEL_1 {}\n\n'.format(model_decoder_excit.kernel_size-1))
     hf.write('#define DEC_MELSP_CONV_KERNEL_1 {}\n\n'.format(model_decoder_melsp.kernel_size-1))
 
     hf.write('typedef struct {\n')
     hf.write('  float feature_conv_enc_melsp_state[FEATURE_CONV_ENC_MELSP_STATE_SIZE];\n')
     hf.write('  float feature_conv_enc_excit_state[FEATURE_CONV_ENC_EXCIT_STATE_SIZE];\n')
-    hf.write('  float feature_conv_spk_state[FEATURE_CONV_SPK_STATE_SIZE];\n')
+    hf.write('  float feature_conv_dec_excit_state[FEATURE_CONV_DEC_EXCIT_STATE_SIZE];\n')
     hf.write('  float feature_conv_dec_melsp_state[FEATURE_CONV_DEC_MELSP_STATE_SIZE];\n')
     hf.write('  float gru_enc_melsp_state[SPARSE_GRU_ENC_MELSP_STATE_SIZE];\n')
     hf.write('  float gru_enc_excit_state[SPARSE_GRU_ENC_EXCIT_STATE_SIZE];\n')
-    hf.write('  float gru_spk_state[GRU_SPK_STATE_SIZE];\n')
+    hf.write('  float gru_dec_excit_state[GRU_DEC_EXCIT_STATE_SIZE];\n')
     hf.write('  float gru_dec_melsp_state[SPARSE_GRU_DEC_MELSP_STATE_SIZE];\n')
     hf.write('} CycleVAEMelspExcitSpkNNetState;\n')
 
@@ -1126,9 +1217,7 @@ def main():
     ## Dump high-pass filter coeffs, half hanning-window coeffs, mel-filterbank, and mu-law 10 table here
     ## hpassfilt.h, halfwin.h, melfb.h, mu_law_10_table.h
     fs = args.fs
-    #fs = config.fs
     fftl = args.fftl
-    #fftl = config.fftl
     shiftms = args.shiftms
     winms = args.winms
     print(f'{fs} {fftl} {shiftms} {winms}')
@@ -1137,13 +1226,14 @@ def main():
     win_length = int((fs/1000)*winms)
     print(f'{hop_length} {win_length}')
 
-    cutoff = HIGHPASS_CUTOFF
+    cutoff = args.highpass_cutoff
+    #cutoff = HIGHPASS_CUTOFF
     nyq = fs // 2
     norm_cutoff = cutoff / nyq
     taps = HPASS_FILTER_TAPS
     print(f'{cutoff} {nyq} {norm_cutoff} {taps}')
 
-    mel_dim = config.mel_dim
+    mel_dim = config_cycvae.mel_dim
     print(f'{mel_dim}')
 
     cfile = "freq_conf.h"

@@ -54,17 +54,15 @@ typedef struct {
   int n_dim;
 } NormStats;
 
-//PLT_Mar21
+//PLT_May21
 typedef struct {
   const float *bias;
   const float *input_weights;
-  //const float *factor_signs;
-  //const float *factor_mags;
-  //const float *factor_mids;
   const float *factors;
+  int activation;
   int activation_signs;
   int activation_mags;
-  int activation_mids;
+  int activation_logits;
 } MDenseLayerMWDLP10;
 
 typedef struct {
@@ -125,8 +123,8 @@ void compute_gru3(const GRULayer *gru, float *state, const float *input);
 
 void compute_sparse_gru(const SparseGRULayer *gru, float *state, const float *input);
 
-//PLT_Dec20
-void compute_conv1d_linear(const Conv1DLayer *layer, float *output, float *mem, const float *input);
+//PLT_Jun21
+void compute_conv1d_linear_frame_in(const Conv1DLayer *layer, float *output, float *mem, const float *input);
 
 //PLT_Sep20
 int sample_from_pdf_mwdlp(const float *pdf, int N);
