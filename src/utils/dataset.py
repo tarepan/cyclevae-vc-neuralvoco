@@ -147,10 +147,23 @@ class FeatureDatasetNeuVoco(Dataset):
         Yield an item.
         Args:
             idx (number)
+        Returns:
+            {
+                x_org::(T,) - An original fullband waveform.
+                x_org_band::(T, Subband) - An original subband waveforms stacked in a single ndarray.
+                x_c: x // self.cf_dim,
+                x_f: x % self.cf_dim,
+                feat - Features.
+                slen::Number - Length of x_org.
+                flen::Number - Length of feat.
+                featfile: featfile
+            }
         """
         wavfile = self.wav_list[idx]
         featfile = self.feat_list[idx]
+        # (maybe) The original (fullband) waveform.
         x_org = None
+        # (maybe) The original subband waveforms.
         x_org_band = None
         
         if (self.spcidx and not check_hdf5(featfile, '/spcidx_range')) or (self.wlat_flag and self.worg_flag):
@@ -171,13 +184,25 @@ class FeatureDatasetNeuVoco(Dataset):
             wavfile_pqmf_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(wavfile)))+"_pqmf_"+str(self.n_bands), \
                 os.path.basename(os.path.dirname(os.path.dirname(wavfile))), os.path.basename(os.path.dirname(wavfile)))
             #wavfile_pqmf_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(wavfile)))+"_pqmf_fsb_"+str(self.n_bands), \
+            
+            # <x_org>
             if self.worgx_flag:
+                # Maybe "fullband original waveform" from `wavfile`
                 x_org, _ = sf.read(wavfile, dtype=np.float32)
             elif self.worgx_rec_flag:
+                # Reconstructed fullband waveform? Maybe PQMF analy/synth-reconstructed fullband wavefrom?
                 wavfile_org = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(wavfile)))+"_pqmf_"+str(self.n_bands)+"_rec", \
                     os.path.basename(os.path.dirname(os.path.dirname(wavfile))), os.path.basename(os.path.dirname(wavfile)), os.path.basename(wavfile))
                 #wavfile_org = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(wavfile)))+"_pqmf_fsb_"+str(self.n_bands)+"_rec", \
+#                 os.path.join(
+#                     os.path.dirname(os.path.dirname(os.path.dirname(wavfile))) + "_pqmf_"+str(self.n_bands)+"_rec",
+#                     os.path.basename(os.path.dirname(os.path.dirname(wavfile))),
+#                     os.path.basename(os.path.dirname(wavfile)),
+#                     os.path.basename(wavfile)
+#                 )
                 x_org, _ = sf.read(wavfile_org, dtype=np.float32)
+            # </x_org>
+            
             for i in range(self.n_bands):
                 # PDMF file name handling (one/two degit)
                 if self.n_bands >= 10:
@@ -187,11 +212,19 @@ class FeatureDatasetNeuVoco(Dataset):
                         wavfile_pqmf = os.path.join(wavfile_pqmf_dir, os.path.basename(wavfile).replace(".wav", "_B-"+str(i+1)+".wav"))
                 else:
                     wavfile_pqmf = os.path.join(wavfile_pqmf_dir, os.path.basename(wavfile).replace(".wav", "_B-"+str(i+1)+".wav"))
-                # /
-                x_pqmf, _ = sf.read(wavfile_pqmf, dtype=np.float32)
+                # /PDMF file name handling (one/two degit)
+
+                # x: sample, f: feature
+                # Read subband No.i+1 waveform
+                # `x_pqmf` is a local variable for temporal read before more processing.
+                x_pqmf, _ = sf.read(wavfile_pqmf, dtype=np.float32) # (T, )
+                
+                # Subband No.2~
                 if i > 0:
                     x_pqmf, _ = validate_length(x_pqmf, h, self.upsampling_factor_bands)
-                    x = np.c_[x, np.expand_dims(x_pqmf,-1)]
+                    # Stack a subband into summary array
+                    x = np.c_[x, np.expand_dims(x_pqmf,-1)] # (T, Subband) & (T,) => (T, Subband) & (T, 1) => (T, Subband+1)
+                # Subband No.1
                 else:
                     # Load `h`, `h_lat`, `h_spk`, `h_f0`, `h_org`, `h_magsp_org`
                     if not self.with_excit:
@@ -211,9 +244,11 @@ class FeatureDatasetNeuVoco(Dataset):
                                 h_f0 = read_hdf5(featfile, self.string_path_f0)
                             if self.worg_flag:
                                 h_org = read_hdf5(file_org, self.string_path_org)
-                                h_magsp_org = read_hdf5(file_org, '/magsp')
+                                h_magsp_org = read_hdf5(file_org, '/magsp')                                
                     else:
                         h = np.c_[read_hdf5(featfile, self.string_path_org)[:,:self.excit_dim], read_hdf5(featfile, self.string_path)]
+                        
+                    # Validation?
                     x_pqmf, h = validate_length(x_pqmf, h, self.upsampling_factor_bands)
                     if self.worgx_flag or self.worgx_rec_flag:
                         x_org, _ = validate_length(x_org, h, self.upsampling_factor)
@@ -230,7 +265,14 @@ class FeatureDatasetNeuVoco(Dataset):
                         if self.worg_flag:
                             _, h_org = validate_length(h, h_org)
                             _, h_magsp_org = validate_length(h_org, h_magsp_org)
-                    x = np.expand_dims(x_pqmf,-1)
+                    # /Validation?
+                            
+                    x = np.expand_dims(x_pqmf,-1) # [T,] => [T, 1]
+            
+            # Until here
+            # x_org: fullband waveform (T, )
+            # x: subband waveforms (T, Subband)
+            # /Until here
 
             if self.wav_transform_in is not None:
                 x_t = self.wav_transform_in(x) # cont -> disc in/trg n_bands
@@ -265,7 +307,7 @@ class FeatureDatasetNeuVoco(Dataset):
                     assert(h.shape[0]==h_magsp_org.shape[0])
                     assert(h.shape[0]==h_org.shape[0])
             # /Validation
-
+            
             frm_len = h.shape[0]
             if self.spcidx:
                 f_ss = spcidx[0]-self.pad_left
@@ -312,9 +354,12 @@ class FeatureDatasetNeuVoco(Dataset):
                         h_magsp_org = h_magsp_org[spcidx_s_e[0]:spcidx_s_e[-1]]
                         assert(h.shape[0]==h_magsp_org.shape[0])
                         assert(h.shape[0]==h_org.shape[0])
-            slen = x.shape[0]
+                        
+            # slen & flen determined here
+            slen = x.shape[0] # (T_wave,) => T_wave
             flen = h.shape[0]
 
+            # Padding
             h = torch.FloatTensor(self.pad_feat_transform(h))
             if self.magsp_flag:
                 h_magsp = torch.FloatTensor(self.pad_feat_transform(h_magsp))
@@ -338,13 +383,14 @@ class FeatureDatasetNeuVoco(Dataset):
                 x = torch.FloatTensor(self.pad_wav_transform(x)) # cont trg_n_bands
                 if self.wav_transform is not None and self.wav_transform_out is not None:
                     x_f = torch.FloatTensor(self.pad_wav_f_transform(x_f)) # cont trg_full
+            # /Padding
 
             if self.spk_list is not None:
                 #featfile_spk = os.path.basename(os.path.dirname(featfile)).split("-")[0]
                 #spk_idx = (torch.ones(h.shape[0])*self.spk_list.index(featfile_spk)).long()
                 idx_spk = self.spk_list.index(os.path.basename(os.path.dirname(featfile)))
                 spk_code = torch.LongTensor(self.pad_feat_transform(np.ones(flen)*idx_spk))
-
+            
             ## Item return
             if self.wav_transform_in is not None: # laplace-disc
                 x_t = torch.LongTensor(self.pad_wav_transform(x_t)) # disc in/trg_n_bands
@@ -365,10 +411,12 @@ class FeatureDatasetNeuVoco(Dataset):
                     if self.cf_dim is not None and self.wav_transform is not None and self.wav_transform_out is None:
                         if self.worgx_flag or self.worgx_rec_flag:
                             if self.worgx_band_flag:
+                                ##### Can be used in MWDLP training
                                 if not self.magsp_flag:
                                     return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'c': spk_code}
                                 else:
                                     return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'feat_magsp': h_magsp, 'slen': slen, 'flen': flen, 'featfile': featfile, 'c': spk_code}
+                                ##### /Can be used in MWDLP training
                             else:
                                 return {'x_org': x_org, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'c': spk_code}
                         else:
@@ -380,6 +428,7 @@ class FeatureDatasetNeuVoco(Dataset):
                         if self.wlat_flag:
                             if self.worg_flag:
                                 if self.wspk_flag:
+                                    ##### Can be used in MWDLP training
                                     if not self.wrec_flag:
                                         if not self.wf0_flag:
                                             return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, \
@@ -394,6 +443,7 @@ class FeatureDatasetNeuVoco(Dataset):
                                         else:
                                             return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'lat': h_lat,
                                                 'feat': h, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'f0': h_f0, 'spk': h_spk, 'slen': slen, 'flen': flen, 'featfile': featfile}
+                                    ##### /Can be used in MWDLP training
                                 else:
                                     return {'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat, 'slen': slen, 'flen': flen, 'featfile': featfile}
                             else:
@@ -404,12 +454,15 @@ class FeatureDatasetNeuVoco(Dataset):
                         else:
                             if self.worgx_flag or self.worgx_rec_flag:
                                 if self.worgx_band_flag:
+                                    ## Item used by training: x_org, x_org_band, x_c, x_f, feat, slen, flen, featfile
+                                    ##### Can be used in MWDLP training
                                     # Add `feat_magsp` attribute or not.
                                     if not self.magsp_flag:
                                         # v3.0 candidate / worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue
                                         return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
                                     else:
                                         return {'x_org': x_org, 'x_org_band': x_org_band, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_magsp': h_magsp}
+                                    ##### /Can be used in MWDLP training
                                 else:
                                     return {'x_org': x_org, 'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
                             else:
