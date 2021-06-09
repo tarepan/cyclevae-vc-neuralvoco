@@ -250,7 +250,7 @@ def write_to_tensorboard(writer, steps, loss):
 
 def write_audio_to_tensorboard(writer, steps, waveform, sr):
     """Write an audio waveform to tensorboard."""
-    writer.add_audio('audio', audio, steps, sr)
+    writer.add_audio('audio', waveform, steps, sr)
 
 
 def sparsify(model_waveform, iter_idx, t_start, t_end, interval, densities, densities_p=None):
@@ -845,31 +845,6 @@ def main():
         batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
             del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator)
         
-        """
-        () is name in generator.
-
-        Returns:
-            batch_x_fb (== x)
-            batch_x (== xs)
-            batch_x_c (== xs_c): Coarse?
-            batch_x_f (== xs_f): Fine?
-            batch_feat (== feat)
-            c_idx
-            utt_idx (== idx)
-            featfile
-            x_bs
-            f_bs
-            x_ss
-            f_ss
-            n_batch_utt
-            del_index_utt
-            max_slen
-            max_flen
-            idx_select
-            idx_select_full
-            slens_acc
-            flens_acc
-        """
         # All training batches processed once (c_idx == -1)
         if c_idx < 0:
             # Training surrary of this epoch and evaluation
@@ -925,34 +900,32 @@ def main():
             for param in model_waveform.parameters():
                 param.requires_grad = False
             logging.info("Evaluation data")
+            batch_feat_for_gen = None
+            
             while True:
                 # ========================================================================================================================
                 # Evaluation of an batch
                 with torch.no_grad():
                     start = time.time()
                     # fullband, subbands,
-#                     batch_feat_for_gen = None
                     batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
                         del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator_eval)
                     # All evaluation batches processed once (c_idx == -1)
                     if c_idx < 0:
-                        # Evaluation of this epoch is ended.
-                        print("waveform check", datetime.datetime.now())
                         ### Waveform check
-#                         if iter_idx < args.step_count:
-#                             pqmf = PQMF(args.n_bands).cuda()
-#                             subband_waveforms = model_waveform.generate(batch_feat)
-#                             waveforms = pqmf.synthesis(subband_waveforms)[:,0] # (B, 1, T) => (B, T)
-#                             wave0_emphed = waveforms[0].cpu().data.numpy() # (B, T) => (T,)
-#                             waveform_raw = librosa.effects.deemphasis(wave0_emphed, coef=0.85)
-#                             wave = np.clip(waveform_raw, -1, 0.999969482421875)
-#                             write_audio_to_tensorboard(writer, iter_idx, wave, args.fs)
+                        pqmf = PQMF(args.n_bands).cuda()
+                        subband_waveforms = model_waveform.generate(batch_feat_for_gen)
+                        waveforms = pqmf.synthesis(subband_waveforms)[:,0] # (B, 1, T) => (B, T)
+                        wave0_emphed = waveforms[0].cpu().data.numpy() # (B, T) => (T,)
+                        waveform_raw = librosa.effects.deemphasis(wave0_emphed, coef=0.85)
+                        wave = np.clip(waveform_raw, -1, 0.999969482421875)
+                        write_audio_to_tensorboard(writer, iter_idx, wave, args.fs)
                         ### /Waveform check
-                        
+                        # Evaluation of this epoch is ended.                        
                         break
                     
                     # Preserve batch_feat for sample waveform generation.
-#                     batch_feat_for_gen = batch_feat
+                    batch_feat_for_gen = batch_feat
 
 
                     x_es = x_ss+x_bs
