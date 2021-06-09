@@ -67,12 +67,33 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
     Args:
         wav_list (str): list of wav files
         feat_list (str): list of feat files
-        batch_size (int): batch size
+        batch_size (int): Length of a partial waveform
         wav_transform (func): preprocessing function for waveform
         limit_count: The maximum number of item the Generator will yeild (Not used now (None=Infinite))
 
     Return:
         (object): generator instance
+            Returns of instance:
+                x::(B, T) - Batch of fullband waveforms (batch of x_org)
+                xs:(B, T, S) - Batch of subband waveform stacks (batch of x_org_band)
+                xs_c (== batch_x_c): Coarse?
+                xs_f (== batch_x_f): Fine?
+                feat (== batch_feat)
+                c_idx
+                idx (== utt_idx)
+                featfile
+                x_bs
+                f_bs
+                x_ss
+                f_ss
+                n_batch_utt
+                del_index_utt
+                max_slen: Maximum `slen` in a batch
+                max_flen: Maximum `flen` in a batch
+                idx_select
+                idx_select_full
+                slens_acc
+                flens_acc
     """
     while True:
         # process over all of files
@@ -80,40 +101,52 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
         count = 0
         upsampling_factor_bands = upsampling_factor // n_bands
         for idx, batch in enumerate(dataloader):
-            slens = batch['slen'].data.numpy()
-            flens = batch['flen'].data.numpy()
-            max_slen = np.max(slens) ## get max samples length
-            max_flen = np.max(flens) ## get max samples length
-            x = batch['x_org'][:,:max_slen*n_bands].to(device)
-            xs = batch['x_org_band'][:,:max_slen].to(device)
-            xs_c = batch['x_c'][:,:max_slen].to(device)
-            xs_f = batch['x_f'][:,:max_slen].to(device)
-            feat = batch['feat'][:,:max_flen].to(device)
+            slens = batch['slen'].data.numpy() # (B, )
+            flens = batch['flen'].data.numpy() # (B, )
+            max_slen = np.max(slens) ## maximum waveform length
+            max_flen = np.max(flens) ## minumum featuresSequence length
+
+            ## Mainly only Sliced (could be deletion with del_index_utt)
+            x = batch['x_org'][:,:max_slen*n_bands].to(device) # (B, T)
+            xs = batch['x_org_band'][:,:max_slen].to(device) # (B, T, Subband)
+            xs_c = batch['x_c'][:,:max_slen].to(device) #
+            xs_f = batch['x_f'][:,:max_slen].to(device) #
+            feat = batch['feat'][:,:max_flen].to(device) #
+            ## /
+            
             #spcidx_s = batch['spcidx_s_e'][0]
             #spcidx_s = batch['spcidx_s'].data.numpy()
             #spcidx_e = batch['spcidx_s_e'][1]
             featfiles = batch['featfile']
             #cs = batch['c'].to(device)
-            n_batch_utt = feat.size(0)
+            n_batch_utt = feat.size(0) # Actual batch size, which could be smaller than config (last elements in dataset)
 
             len_frm = max_flen
+            ## SampleSize, BatchSize...?
             x_ss = 0
             f_ss = 0
+            # `x_bs` is fixed here.
             x_bs = batch_size*upsampling_factor_bands
             f_bs = batch_size
+            ##
             delta = batch_size*upsampling_factor_bands
             delta_frm = batch_size
             slens_acc = np.array(slens)
-            flens_acc = np.array(flens)
+            flens_acc = np.array(flens) # (B, )
+            
+            # Iterative yield within a batch
             while True:
                 del_index_utt = []
                 idx_select = []
                 idx_select_full = []
+
+                # Delete empty items (length==0 sequences) in a batch
                 for i in range(n_batch_utt):
+                    # Item No.i in a batch, whether the item is empty or not.
                     if flens_acc[i] <= 0:
                         del_index_utt.append(i)
                 if len(del_index_utt) > 0:
-                    # delete specified vectors
+                    # delete specified items in a batch
                     x = torch.FloatTensor(np.delete(x.cpu().data.numpy(), del_index_utt, axis=0)).to(device)
                     xs = torch.FloatTensor(np.delete(xs.cpu().data.numpy(), del_index_utt, axis=0)).to(device)
                     xs_c = torch.LongTensor(np.delete(xs_c.cpu().data.numpy(), del_index_utt, axis=0)).to(device)
@@ -124,7 +157,11 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
                     slens_acc = np.delete(slens_acc, del_index_utt, axis=0)
                     flens_acc = np.delete(flens_acc, del_index_utt, axis=0)
                     #spcidx_s = np.delete(spcidx_s, del_index_utt, axis=0)
+                    # n_batch_utt: Number of effective (not empty) items in a batch
                     n_batch_utt -= len(del_index_utt)
+                # /Delete empty items
+
+#                 idx_select
                 for i in range(n_batch_utt):
                     if flens_acc[i] < f_bs:
                         idx_select.append(i)
@@ -142,6 +179,7 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
                 # Batch break candidate 1/2: limit_count argument
                 if limit_count is not None and count > limit_count:
                     break
+                # Batch loop judgement
                 len_frm -= delta_frm
                 if len_frm > 0:
                     x_ss += delta
@@ -799,7 +837,32 @@ def main():
         start = time.time()
         batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
             del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator)
+        
+        """
+        () is name in generator.
 
+        Returns:
+            batch_x_fb (== x)
+            batch_x (== xs)
+            batch_x_c (== xs_c): Coarse?
+            batch_x_f (== xs_f): Fine?
+            batch_feat (== feat)
+            c_idx
+            utt_idx (== idx)
+            featfile
+            x_bs
+            f_bs
+            x_ss
+            f_ss
+            n_batch_utt
+            del_index_utt
+            max_slen
+            max_flen
+            idx_select
+            idx_select_full
+            slens_acc
+            flens_acc
+        """
         # All training batches processed once (c_idx == -1)
         if c_idx < 0:
             # Training surrary of this epoch and evaluation
@@ -860,21 +923,29 @@ def main():
                 # Evaluation of an batch
                 with torch.no_grad():
                     start = time.time()
+                    # fullband, subbands,
+#                     batch_feat_for_gen = None
                     batch_x_fb, batch_x, batch_x_c, batch_x_f, batch_feat, c_idx, utt_idx, featfile, x_bs, f_bs, x_ss, f_ss, n_batch_utt, \
                         del_index_utt, max_slen, max_flen, idx_select, idx_select_full, slens_acc, flens_acc = next(generator_eval)
                     # All evaluation batches processed once (c_idx == -1)
                     if c_idx < 0:
                         # Evaluation of this epoch is ended.
-                        break
 
-                    ### Waveform check
-#                     pqmf = PQMF(args.n_bands).cuda()
-#                     samples = model_waveform.generate(batch_feat)
-#                     samples = pqmf.synthesis(samples)[:,0].cpu().data.numpy() # B x 1 x T --> B x T
-#                     # single waveform in a batch
-#                     samples = librosa.effects.deemphasis(samples, coef=0.85)
-#                     wav = np.clip(samples[:samples_len], -1, 0.999969482421875)
-                    ### /Waveform check
+                        ### Waveform check
+#                         pqmf = PQMF(args.n_bands).cuda()
+#                         subband_waveforms = model_waveform.generate(batch_feat)
+#                         waveforms = pqmf.synthesis(subband_waveforms)[:,0] # (B, 1, T) => (B, T)
+#                         wave0_emphed = waveforms[0].cpu().data.numpy() # (B, T) => (T,)
+#                         waveform_raw = librosa.effects.deemphasis(wave0_emphed, coef=0.85)
+#                         wave = np.clip(waveform_raw, -1, 0.999969482421875)
+                        # Save in Tensorboard
+                        ### /Waveform check
+                        
+                        break
+                    
+                    # Preserve batch_feat for sample waveform generation.
+#                     batch_feat_for_gen = batch_feat
+
 
                     x_es = x_ss+x_bs
                     f_es = f_ss+f_bs
@@ -886,18 +957,23 @@ def main():
                         f_es_pad_right = max_flen+pad_right
                     if x_ss > 0:
                         if x_es <= max_slen:
+                            # maybe coarse/fine
+                            # range: x_ss-1 <= T < x_es-1,    so, width==x_bs
                             batch_x_c_prev = batch_x_c[:,x_ss-1:x_es-1]
                             batch_x_f_prev = batch_x_f[:,x_ss-1:x_es-1]
                             if args.lpc > 0:
                                 if x_ss-args.lpc >= 0:
+                                    # range: (x_ss - args.lpc) <= T < (x_es - 1)
                                     batch_x_c_lpc = batch_x_c[:,x_ss-args.lpc:x_es-1]
                                     batch_x_f_lpc = batch_x_f[:,x_ss-args.lpc:x_es-1]
                                 else:
                                     batch_x_c_lpc = F.pad(batch_x_c[:,:x_es-1], (0, 0, -(x_ss-args.lpc), 0), "constant", args.c_pad)
                                     batch_x_f_lpc = F.pad(batch_x_f[:,:x_es-1], (0, 0, -(x_ss-args.lpc), 0), "constant", args.f_pad)
+                            # range: x_ss <= T < x_es
                             batch_x_c = batch_x_c[:,x_ss:x_es]
                             batch_x_f = batch_x_f[:,x_ss:x_es]
                             batch_x_fb = batch_x_fb[:,x_ss*args.n_bands:x_es*args.n_bands]
+                        # Beyond array end (same processing with proper end)
                         else:
                             batch_x_c_prev = batch_x_c[:,x_ss-1:-1]
                             batch_x_f_prev = batch_x_f[:,x_ss-1:-1]
@@ -911,6 +987,7 @@ def main():
                             batch_x_c = batch_x_c[:,x_ss:]
                             batch_x_f = batch_x_f[:,x_ss:]
                             batch_x_fb = batch_x_fb[:,x_ss*args.n_bands:]
+                        # /Beyond array end
                     else:
                         batch_x_c_prev = F.pad(batch_x_c[:,:x_es-1], (0, 0, 1, 0), "constant", args.c_pad)
                         batch_x_f_prev = F.pad(batch_x_f[:,:x_es-1], (0, 0, 1, 0), "constant", args.f_pad)
@@ -929,6 +1006,7 @@ def main():
                     else: # pad left and right need additional replicate
                         batch_feat = F.pad(batch_feat[:,:max_flen].transpose(1,2), (-f_ss_pad_left,f_es_pad_right-max_flen), "replicate").transpose(1,2)
 
+                    # RNN #####
                     if f_ss > 0:
                         if len(del_index_utt) > 0:
                             h_x = torch.FloatTensor(np.delete(h_x.cpu().data.numpy(), del_index_utt, axis=1)).to(device)
@@ -948,6 +1026,8 @@ def main():
                         else:
                             batch_x_c_output, batch_x_f_output, h_x, h_x_2, h_f \
                                 = model_waveform(batch_feat, batch_x_c_prev, batch_x_f_prev, batch_x_c)
+                    # /RNN #####
+
                     u = torch.empty_like(batch_x_c_output)
                     logits_gumbel = F.softmax(batch_x_c_output - torch.log(-torch.log(torch.clamp(u.uniform_(), eps, eps_1))), dim=-1)
                     logits_gumbel_norm_1hot = F.threshold(logits_gumbel / torch.max(logits_gumbel,-1,keepdim=True)[0], eps_1, 0)
