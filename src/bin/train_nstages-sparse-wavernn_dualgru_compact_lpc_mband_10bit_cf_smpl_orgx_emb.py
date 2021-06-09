@@ -24,6 +24,7 @@ import logging
 import os
 import sys
 import time
+import datetime
 
 from collections import defaultdict
 from tensorboardX import SummaryWriter
@@ -33,6 +34,7 @@ from decimal import Decimal
 import numpy as np
 import six
 import torch
+import librosa
 
 from pqmf import PQMF
 
@@ -244,6 +246,11 @@ def write_to_tensorboard(writer, steps, loss):
     """Write to tensorboard."""
     for key, value in loss.items():
         writer.add_scalar(key, value, steps)
+
+
+def write_audio_to_tensorboard(writer, steps, waveform, sr):
+    """Write an audio waveform to tensorboard."""
+    writer.add_audio('audio', audio, steps, sr)
 
 
 def sparsify(model_waveform, iter_idx, t_start, t_end, interval, densities, densities_p=None):
@@ -930,15 +937,16 @@ def main():
                     # All evaluation batches processed once (c_idx == -1)
                     if c_idx < 0:
                         # Evaluation of this epoch is ended.
-
+                        print("waveform check", datetime.datetime.now())
                         ### Waveform check
-#                         pqmf = PQMF(args.n_bands).cuda()
-#                         subband_waveforms = model_waveform.generate(batch_feat)
-#                         waveforms = pqmf.synthesis(subband_waveforms)[:,0] # (B, 1, T) => (B, T)
-#                         wave0_emphed = waveforms[0].cpu().data.numpy() # (B, T) => (T,)
-#                         waveform_raw = librosa.effects.deemphasis(wave0_emphed, coef=0.85)
-#                         wave = np.clip(waveform_raw, -1, 0.999969482421875)
-                        # Save in Tensorboard
+#                         if iter_idx < args.step_count:
+#                             pqmf = PQMF(args.n_bands).cuda()
+#                             subband_waveforms = model_waveform.generate(batch_feat)
+#                             waveforms = pqmf.synthesis(subband_waveforms)[:,0] # (B, 1, T) => (B, T)
+#                             wave0_emphed = waveforms[0].cpu().data.numpy() # (B, T) => (T,)
+#                             waveform_raw = librosa.effects.deemphasis(wave0_emphed, coef=0.85)
+#                             wave = np.clip(waveform_raw, -1, 0.999969482421875)
+#                             write_audio_to_tensorboard(writer, iter_idx, wave, args.fs)
                         ### /Waveform check
                         
                         break
