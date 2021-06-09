@@ -2254,7 +2254,16 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
     def generate(self, c, intervals=4000, spk_code=None, spk_aux=None, aux=None, outpad_left=None, outpad_right=None, pad_first=True):
         """
         Args:
-            c: Conditioning feature sequence [features, T_c]? Batch contained?
+            c ((B, T, F)?): Conditioning feature sequence.
+            intervals (number): Performance test config, currently no meaning.
+            spk_code
+            spk_aux
+            aux
+            outpad_left
+            outpad_right
+            pad_first (bool): Padding setting
+        Returns:
+            (B, Subband, T) - A batch of subband waveforms
         """
         # Performance test utilities
         start = time.time()
@@ -2264,8 +2273,8 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
 
         upsampling_factor = self.upsampling_factor
         c_pad = (self.n_quantize // 2) // self.cf_dim
-        f_pad = (self.n_quantize // 2) % self.cf_dim        
-        B = c.shape[0] # Dimension of a feature vector? or, batch?
+        f_pad = (self.n_quantize // 2) % self.cf_dim
+        B = c.shape[0] # n_Batch?
 
         # Input
         if pad_first and outpad_left is None and outpad_right is None:
@@ -2281,7 +2290,8 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
         if self.lpc > 0:
             x_c_lpc = torch.empty(B,1,self.n_bands,self.lpc).cuda().fill_(c_pad).long() # B x 1 x n_bands x K
             x_f_lpc = torch.empty(B,1,self.n_bands,self.lpc).cuda().fill_(f_pad).long() # B x 1 x n_bands x K
-        # Sample sequence length
+
+        # Sample sequence length.
         T = c.shape[1]*upsampling_factor
 
         c_f = c[:,:1]
