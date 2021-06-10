@@ -45,17 +45,18 @@ stage=0init123
 #stage=6
 
 ##number of parallel jobs in feature extraction / noise-shaping & pqmf proc. / statistics calculation
-n_jobs=1
-n_jobs=5
+# n_jobs=1
+n_jobs=2
+# n_jobs=5
 #n_jobs=10
 #n_jobs=20
 #n_jobs=25
-n_jobs=30
+# n_jobs=30
 #n_jobs=35
-n_jobs=40
+# n_jobs=40
 #n_jobs=45
 #n_jobs=50
-n_jobs=60
+# n_jobs=60
 
 #######################################
 #          TRAINING SETTING           #
