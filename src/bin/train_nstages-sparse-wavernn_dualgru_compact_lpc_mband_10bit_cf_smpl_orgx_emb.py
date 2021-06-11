@@ -439,12 +439,17 @@ def main():
 
     torch.backends.cudnn.benchmark = True #faster
 
+    # Conditioning input type: Mel-spectrogram or Cepstrum
+    ## excit_dim: Dimension of excitation signals (U/V & Fo) as conditioning inputs
+    # Mel-spectrogram
     if 'mel' in args.string_path:
+        # Only mel-spec
         if not args.with_excit:
             mean_stats = torch.FloatTensor(read_hdf5(args.stats, "/mean_melsp"))
             scale_stats = torch.FloatTensor(read_hdf5(args.stats, "/scale_melsp"))
             args.excit_dim = 0
             with_excit = False
+        # mel-spec + excitations (vuv & log_fo)
         else:
             mean_stats = torch.FloatTensor(np.r_[read_hdf5(args.stats, "/mean_feat_mceplf0cap")[:2], read_hdf5(args.stats, "/mean_melsp")])
             scale_stats = torch.FloatTensor(np.r_[read_hdf5(args.stats, "/scale_feat_mceplf0cap")[:2], read_hdf5(args.stats, "/scale_melsp")])
@@ -453,6 +458,7 @@ def main():
         #mean_stats = torch.FloatTensor(np.r_[read_hdf5(args.stats, "/mean_feat_mceplf0cap")[:6], read_hdf5(args.stats, "/mean_melsp")])
         #scale_stats = torch.FloatTensor(np.r_[read_hdf5(args.stats, "/scale_feat_mceplf0cap")[:6], read_hdf5(args.stats, "/scale_melsp")])
         #args.excit_dim = 6
+    # Cepstrum
     else:
         with_excit = False
         mean_stats = torch.FloatTensor(read_hdf5(args.stats, "/mean_"+args.string_path.replace("/","")))
@@ -495,6 +501,8 @@ def main():
         do_prob=args.do_prob)
     logging.info(model_waveform)
     pqmf = PQMF(args.n_bands)
+    
+    # FFT config based on sampling rate
     fft_sizes = [256, 128, 64, 32, 32]
     if args.fs == 22050 or args.fs == 44100:
         hop_sizes = [88, 44, 22, 11, 8]
@@ -521,6 +529,9 @@ def main():
         else:
             hop_sizes_fb = [960, 480, 240, 120, 96]
     win_lengths_fb = [round(elmt*2.5) for elmt in hop_sizes_fb]
+    # /FFT config based on sampling rate
+
+    # Loss criterions
     criterion_stft = MultiResolutionSTFTLoss(
         fft_sizes = fft_sizes,
         hop_sizes = hop_sizes,
@@ -533,6 +544,8 @@ def main():
     )
     criterion_ce = torch.nn.CrossEntropyLoss(reduction='none')
     criterion_l1 = torch.nn.L1Loss(reduction='none')
+    # /Loss criterions
+    
     indices_1hot = torch.FloatTensor(np.arange(args.cf_dim))
 
     # send to gpu
@@ -550,6 +563,9 @@ def main():
     else:
         logging.error("gpu is not available. please check the setting.")
         sys.exit(1)
+    # /send to gpu
+
+    # Logging of configs
     logging.info(indices_1hot)
     logging.info(criterion_stft.fft_sizes)
     logging.info(criterion_stft.hop_sizes)
@@ -558,6 +574,7 @@ def main():
     logging.info(criterion_stft_fb.hop_sizes)
     logging.info(criterion_stft_fb.win_lengths)
     logging.info(f'{pqmf.subbands} {pqmf.A} {pqmf.taps} {pqmf.cutoff_ratio} {pqmf.beta}')
+    # /Logging of configs
 
     model_waveform.train()
 
@@ -577,6 +594,7 @@ def main():
         for param in model_waveform.logits.parameters():
             param.requires_grad = False
 
+    # Setup optimizers
     module_list = list(model_waveform.conv.parameters()) + list(model_waveform.conv_s_c.parameters())
     module_list += list(model_waveform.embed_c_wav.parameters()) + list(model_waveform.embed_f_wav.parameters())
     module_list += list(model_waveform.gru.parameters())
@@ -585,7 +603,6 @@ def main():
     module_list += list(model_waveform.logits_c.parameters()) + list(model_waveform.logits_f.parameters())
     #module_list += list(model_waveform.logits_sgns_c.parameters()) + list(model_waveform.logits_mags_c.parameters())
     #module_list += list(model_waveform.logits_sgns_f.parameters()) + list(model_waveform.logits_mags_f.parameters())
-
     optimizer = optim.RAdam(
         module_list,
         lr= args.lr,
@@ -593,6 +610,7 @@ def main():
         eps=1e-8,
         weight_decay=0,
     )
+    # /Setup optimizers
 
     epoch_idx = 0
 
