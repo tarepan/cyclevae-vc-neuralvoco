@@ -173,6 +173,7 @@ highpass_cutoff=`awk '{if ($1 == "highpass_cutoff:") print $2}' conf/config.yml`
 ## alpha: coefficient for pre-emphasis
 alpha=`awk '{if ($1 == "alpha:") print $2}' conf/config.yml`
 
+# `${"tr"|"dv"|"ts"}_vcc20_${shiftms}ms_${fs}kHz`
 trn=tr_${data_name}
 dev=dv_${data_name}
 tst=ts_${data_name}
@@ -274,15 +275,18 @@ if [ `echo ${stage} | grep 0` ];then
     echo "###########################################################"
     echo "#                 DATA PREPARATION STEP                   #"
     echo "###########################################################"
+    # Make data directories. `data/${"tr"|"dv"|"ts"}_vcc20_${shiftms}ms_${fs}kHz`
     mkdir -p data/${trn}
     mkdir -p data/${dev}
     mkdir -p data/${tst}
+    # Clean up the data directories
     [ -e data/${trn}/wav.scp ] && rm data/${trn}/wav.scp
     [ -e data/${dev}/wav.scp ] && rm data/${dev}/wav.scp
     [ -e data/${tst}/wav.scp ] && rm data/${tst}/wav.scp
     touch conf/spkr.yml
     if true; then
     #if false; then
+    # spks=(SEF1 SEF2 SEM1 SEM2 TFM1 TGM1 TMM1 TEF1 TEM1 TEF2 TEM2 TFF1 TGF1 TMF1)
     for spk in ${spks[@]};do
         #n_tr=`find ${wav_org_dir}/train/${spk} -name "*.wav" | wc -l`
         #n_dv=`find ${wav_org_dir}/dev/${spk} -name "*.wav" | wc -l`
@@ -292,6 +296,7 @@ if [ `echo ${stage} | grep 0` ];then
         #find ${wav_org_dir}/dev/${spk} -name "*.wav" | sort >> data/${dev}/wav.scp
         #find ${wav_org_dir}/test/${spk} -name "*.wav" | sort >> data/${tst}/wav.scp
         if [ -n "$(echo $spk | sed -n 's/\(SE\)/\1/p')" ]; then
+            # train/dev/test
             echo vcc20_1 $spk
             find ${wav_org_dir}/${spk} -name "*.wav" \
                 | sort | head -n 60 >> data/${trn}/wav.scp
@@ -1006,6 +1011,13 @@ if [ `echo ${stage} | grep 4` ];then
     fi
 
     # order of files on feats-wav_ns pair has to be the same
+    # data/tr_vcc20_${shiftms}ms_${fs}kHz
+    #   /feats.scp
+    #   /wav_ns.scp
+    # data/dv_vcc20_${shiftms}ms_${fs}kHz
+    #   /feats.scp
+    #   /wav_ns.scp
+    # Specify data paths
     feats=data/${trn}/feats.scp
     feats_eval=data/${dev}/feats.scp
     waveforms=data/${trn}/wav_ns.scp
