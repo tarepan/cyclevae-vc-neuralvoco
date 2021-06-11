@@ -74,6 +74,10 @@ class FeatureDatasetNeuVoco(Dataset):
                                 wrec_flag=True, wf0_flag=False, worgx_rec_flag=None, pad_wav_org_transform=None):
         """
         Args:
+            string_path - Path to conditioning features
+
+            string_path_ft (None|?) - Not used now.
+            
             n_bands (number) - band number, default single-band
 
             Default False/None, expect for `wrec_flag`
@@ -103,10 +107,15 @@ class FeatureDatasetNeuVoco(Dataset):
         self.magsp_flag = magsp_flag
 
         self.pad_wav_org_transform = pad_wav_org_transform
+
+        # Setup string_path
         if string_path_ft is not None:
+            # Currently never
             self.string_path = string_path_ft
         else:
             self.string_path = string_path
+        # /Setup string_path
+        
         if self.wlat_flag or "rec" in self.string_path:
             self.string_path_lat = self.string_path+"_lat"
             if self.wspk_flag:
@@ -226,9 +235,11 @@ class FeatureDatasetNeuVoco(Dataset):
                     x = np.c_[x, np.expand_dims(x_pqmf,-1)] # (T, Subband) & (T,) => (T, Subband) & (T, 1) => (T, Subband+1)
                 # Subband No.1
                 else:
-                    # Load `h`, `h_lat`, `h_spk`, `h_f0`, `h_org`, `h_magsp_org`
+                    # Load conditioning features (`h`, `h_lat`, `h_spk`, `h_f0`, `h_org`, `h_magsp_org`)
+                    # In current MWDLP, with_excit==False, wrec_flag=defaultTrue, worgx_band_flag=True, worgx_flag=True
                     if not self.with_excit:
                         if self.wrec_flag:
+                            # Currently both self.string_path==self.string_path_org==string_path
                             if check_hdf5(featfile, self.string_path):
                                 h = read_hdf5(featfile, self.string_path)
                             else:
@@ -247,7 +258,8 @@ class FeatureDatasetNeuVoco(Dataset):
                                 h_magsp_org = read_hdf5(file_org, '/magsp')                                
                     else:
                         h = np.c_[read_hdf5(featfile, self.string_path_org)[:,:self.excit_dim], read_hdf5(featfile, self.string_path)]
-                        
+                    # /Load conditioning features
+                    
                     # Validation?
                     x_pqmf, h = validate_length(x_pqmf, h, self.upsampling_factor_bands)
                     if self.worgx_flag or self.worgx_rec_flag:
