@@ -374,6 +374,7 @@ def main():
                         type=int, help="number of bands")
     parser.add_argument("--fs", default=24000,
                         type=int, help="sampling rate")
+    # Currently not used in `run.sh` of both MWDLP and CycVAE-MWDLP-VC
     parser.add_argument("--with_excit", default=False,
                         type=strtobool, help="flag to use excit (U/V and F0) if using mel-spec")
     # other setting
@@ -442,8 +443,10 @@ def main():
     # Conditioning input type: Mel-spectrogram or Cepstrum
     ## excit_dim: Dimension of excitation signals (U/V & Fo) as conditioning inputs
     # Mel-spectrogram
+    # string_path=="/log_1pmelmagsp" in `run.sh` of both MWDLP and CycVAE-MWDLP-VC.
     if 'mel' in args.string_path:
         # Only mel-spec
+        # args.with_excit==False in `run.sh` of both MWDLP and CycVAE-MWDLP-VC.
         if not args.with_excit:
             mean_stats = torch.FloatTensor(read_hdf5(args.stats, "/mean_melsp"))
             scale_stats = torch.FloatTensor(read_hdf5(args.stats, "/scale_melsp"))
@@ -657,10 +660,10 @@ def main():
     assert len(wav_list) == len(feat_list)
     batch_size_utt = 8
     logging.info("number of training_data -- batch_size = %d -- %d" % (len(feat_list), batch_size_utt))
-    dataset = FeatureDatasetNeuVoco(wav_list, feat_list, pad_wav_transform, pad_feat_transform, args.upsampling_factor, 
+    dataset = FeatureDatasetNeuVoco(wav_list, feat_list, pad_wav_transform, pad_feat_transform, args.upsampling_factor,
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, worgx_band_flag=True, worgx_flag=True, pad_wav_org_transform=pad_wav_org_transform)
-    # Dataset flags: worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue
+    # Dataset flags: worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue, with_excit=False
     dataloader = DataLoader(dataset, batch_size=batch_size_utt, shuffle=True, num_workers=args.n_workers)
     # Infinite generator
     generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands)
