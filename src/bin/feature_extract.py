@@ -54,16 +54,15 @@ MAX_CODEAP = -8.6856974912498e-12
 
 
 def melsp(x, n_mels=MEL_DIM, n_fft=FFTL, shiftms=SHIFTMS, winms=WINMS, fs=FS):
+    """
+    Convert a waveform into mel-mag/mag spectrogram.
+    """
     hop_length = int((fs/1000)*shiftms)
     win_length = int((fs/1000)*winms)
     stft = librosa.core.stft(x, n_fft=n_fft, hop_length=hop_length,
         win_length=win_length, window='hann')
     magspec = np.abs(stft)
-    #if fs >= 16000:
-    #    melfb = librosa.filters.mel(fs, n_fft, n_mels=n_mels, fmin=50, fmax=8000)
-    #else:
-    #    melfb = librosa.filters.mel(fs, n_fft, n_mels=n_mels, fmin=50, fmax=4000)
-    #melfb = librosa.filters.mel(fs, n_fft, n_mels=n_mels, fmin=50)
+    # Without fmin/max, 0~fs/2 range. https://librosa.org/doc/main/generated/librosa.filters.mel.html
     melfb = librosa.filters.mel(fs, n_fft, n_mels=n_mels)
 
     return np.dot(melfb, magspec).T, magspec.T
@@ -93,6 +92,14 @@ def low_cut_filter(x, fs, cutoff=HIGHPASS_CUTOFF):
 
 def analyze(wav, fs=FS, minf0=MINF0, maxf0=MAXF0, fperiod=SHIFTMS, fftl=FFTL,
         f0=None, time_axis=None):
+    """
+    f0 estimation w/o f0_floor & f0_ceil
+    Args:
+        minf0: Never used
+        maxf0: Never used
+    Returns:
+        (time_axis, fundamental frequency, spectral envelope, aperiodicity)
+    """
     if f0 is None or time_axis is None:
         _f0, time_axis = pw.harvest(wav, fs, f0_floor=60.0, frame_period=fperiod)
         f0 = pw.stonemask(wav, _f0, time_axis, fs) 
@@ -104,10 +111,21 @@ def analyze(wav, fs=FS, minf0=MINF0, maxf0=MAXF0, fperiod=SHIFTMS, fftl=FFTL,
 
 def analyze_range(wav, fs=FS, minf0=MINF0, maxf0=MAXF0, fperiod=SHIFTMS, fftl=FFTL,
         f0=None, time_axis=None):
+    """
+    f0 estimation w/ f0_floor & f0_ceil
+    Args:
+        f0: Given f0. If not provided, estimated by WORLD harvest/stonemask from waveform.
+    Returns:
+        (time_axis, fundamental frequency, spectral envelope, aperiodicity)
+    """
     if f0 is None or time_axis is None:
+        # pyworld.harvest: Estimate fo.
         _f0, time_axis = pw.harvest(wav, fs, f0_floor=minf0, f0_ceil=maxf0, frame_period=fperiod)
-        f0 = pw.stonemask(wav, _f0, time_axis, fs) 
+        # pyworld.stonemask: Refine fo.
+        f0 = pw.stonemask(wav, _f0, time_axis, fs)
+    # pyworld.cheaptrick: Spectral envelope estimation.
     sp = pw.cheaptrick(wav, f0, time_axis, fs, fft_size=fftl)
+    # pyworld.d4c: Aperiodicity estimation.
     ap = pw.d4c(wav, f0, time_axis, fs, fft_size=fftl)
 
     return time_axis, f0, sp, ap
@@ -153,6 +171,11 @@ def extfrm(data, npow, power_threshold=-20):
 
 
 def spc2npow(spectrogram):
+    """
+    Input is named as `spectrogram`, but actual inputs are spectrum envelope...? Spectrum envelope seems to be a spectrum, is it right?
+    Reference: https://github.com/k2kobayashi/sprocket/blob/master/sprocket/speech/parameterizer.py
+    """
+    
     npow = np.apply_along_axis(spvec2pow, 1, spectrogram)
 
     meanpow = np.mean(npow)
@@ -179,7 +202,7 @@ def low_pass_filter(x, fs, cutoff=LOWPASS_CUTOFF, padding=True):
     Args:
         x (ndarray): Waveform sequence
         fs (int): Sampling frequency
-        cutoff (float): Cutoff frequency of low pass filter
+        cutoff (float): Cutoff frequency of low pass filter (LOWPASS_CUTOFF is now 20.)
 
     Return:
         (ndarray): Low pass filtered waveform sequence
@@ -263,6 +286,22 @@ def convert_continuos_codeap(codeap):
 
 
 def main():
+    """
+    Outputs:
+        # route a
+        /f0_range
+        /time_axis
+        log_1pmelmagsp   (#a3): log1p(10000 * mel_mag_spectrogram)
+        magsp            (#a4): mag_spectrogram
+        log_1pmelworldsp (#a5): log1p(10000 * mel_spectral_envelope)
+        worldsp          (#a6): spectral_envelope
+        /feat_org_lf0
+        /spcidx_range
+        /feat_mceplf0cap
+        # route b
+        /f0
+        /npow
+    """
     parser = argparse.ArgumentParser(
         description="making feature file argsurations.")
 
@@ -318,6 +357,7 @@ def main():
         type=int, help="FFT length")
     parser.add_argument("--init", default=False,
         type=strtobool, help="flag for computing stats with initial configs.")
+    # Input waveform lowcut filter param.
     parser.add_argument(
         "--highpass_cutoff", default=HIGHPASS_CUTOFF,
         type=int, help="Cut off frequency in lowpass filter")
@@ -370,12 +410,16 @@ def main():
         os.makedirs(args.hdf5dir)
 
     def feature_extract(cpu, wav_list, arr, max_frame_list, max_spc_frame_list):
+        
+        # Reporting parameters
         n_wav = len(wav_list)
         n_sample = 0
         n_frame = 0
         max_frame = 0
         max_spc_frame = 0
         count = 1
+        # /Reporting parameters
+        
         #if args.fs >= 16000:
         #    melfb_t = np.linalg.pinv(librosa.filters.mel(args.fs, args.fftl, n_mels=args.mel_dim, fmin=50, fmax=8000))
         #else:
@@ -386,19 +430,24 @@ def main():
         for wav_name in wav_list:
             # load wavfile and apply low cut filter
             fs, x = read_wav(wav_name, cutoff=args.highpass_cutoff)
+            
+            # Report
             n_sample += x.shape[0]
             logging.info("cpu-"+str(cpu+1)+" "+str(len(wav_list))+" "+wav_name+" "+\
                 str(x.shape[0])+" "+str(n_sample)+" "+str(count))
             logging.info(wav_list)
+            # /Report
 
-            # check sampling frequency
+            # Validation
             if not fs == args.fs:
                 logging.info("ERROR: sampling frequency is not matched.")
                 sys.exit(1)
+            # /Validation
 
             hdf5name = args.hdf5dir + "/" + os.path.basename(wav_name).replace(".wav", ".h5")
 
             if not args.init:
+                # WORLD feature estimation w/ range parameter
                 if args.minf0 != 40 and args.maxf0 != 700:
                     time_axis_range, f0_range, spc_range, ap_range = analyze_range(x, fs=fs,
                                 minf0=args.minf0, maxf0=args.maxf0, fperiod=args.shiftms,
@@ -415,8 +464,11 @@ def main():
                             time_axis_range = time_axis_range[:ap_range.shape[0]]
                             f0_range = f0_range[:ap_range.shape[0]]
                             spc_range = spc_range[:ap_range.shape[0]]
+                # /WORLD feature estimation w/ range parameter
+                
+                # WORLD feature estimation w/o range parameter
                 else:
-                    logging.info('open spk')
+                    logging.info('open spk')    
                     time_axis_range, f0_range, spc_range, ap_range = analyze(x, fs=fs,
                                 fperiod=args.shiftms, fftl=args.fftl)
                     # ap. estimate for fs less than 16k
@@ -424,17 +476,27 @@ def main():
                         x_up = resample(x, x.shape[0]*(16000//fs))
                         _, _, _, ap_range = analyze(x_up, fs=16000,
                                     fperiod=args.shiftms, fftl=args.fftl)
+                        # Length adjustment
                         if len(f0_range) < ap_range.shape[0]:
                             ap_range = ap_range[:len(f0_range)]
                         elif len(f0_range) > ap_range.shape[0]:
                             time_axis_range = time_axis_range[:ap_range.shape[0]]
                             f0_range = f0_range[:ap_range.shape[0]]
                             spc_range = spc_range[:ap_range.shape[0]]
+                        # /Length adjustment
+                # /WORLD feature estimation w/o range parameter
+                
+                # Save features (No.a1 ~ No.a2)
                 write_hdf5(hdf5name, "/f0_range", f0_range)
                 write_hdf5(hdf5name, "/time_axis", time_axis_range)
-
+                # /Save features
+                
+                # mel-mag-spectrogram & mag-spectrogram
                 melmagsp, magspec = melsp(x, n_mels=args.mel_dim, n_fft=args.fftl, shiftms=args.shiftms,
                                 winms=args.winms, fs=fs)
+                # /mel-mag-spectrogram & mag-spectrogram
+                
+                # Reshape (f0 could be arguments from outside (not used now), this reshape is for that accommodation...?)
                 assert(melmagsp.shape[0] == magspec.shape[0])
                 if len(f0_range) < melmagsp.shape[0]:
                     logging.info(f"f0 less {len(f0_range)} {melmagsp.shape[0]}")
@@ -446,19 +508,24 @@ def main():
                     f0_range = f0_range[:melmagsp.shape[0]]
                     ap_range = ap_range[:melmagsp.shape[0]]
                     spc_range = spc_range[:melmagsp.shape[0]]
+                # /Reshape
 
                 melworldsp = np.dot(spc_range, melfb.T)
 
+                # Logging of shape
                 logging.info(melmagsp.shape)
                 logging.info(magspec.shape)
                 logging.info(melworldsp.shape)
                 logging.info(spc_range.shape)
+                # /Logging of shape
 
+                # Save features (No.a3 ~ No.a6)
+                # One file for a speaker...? hdf5name == `{args.hdf5dir}/{os.path.basename(wav_name).replace(".wav", ".h5")}`
                 write_hdf5(hdf5name, "/log_1pmelmagsp", np.log(1+10000*melmagsp))
                 write_hdf5(hdf5name, "/magsp", magspec)
-                #write_hdf5(hdf5name, "/log_1pmagsp", np.log(1+10000*magspec))
                 write_hdf5(hdf5name, "/log_1pmelworldsp", np.log(1+10000*melworldsp))
                 write_hdf5(hdf5name, "/worldsp", spc_range)
+                # /Save features
 
                 uv_range, cont_f0_range = convert_continuos_f0(np.array(f0_range))
                 unique, counts = np.unique(uv_range, return_counts=True)
@@ -466,27 +533,38 @@ def main():
                 cont_f0_lpf_range = \
                     low_pass_filter(cont_f0_range, int(1.0 / (args.shiftms * 0.001)), cutoff=20)
 
+                # pysptk.sp2mc: Convert spectrum envelope to mel-cepstrum.
+                # https://pysptk.readthedocs.io/en/stable/generated/pysptk.conversion.sp2mc.html
                 mcep_range = ps.sp2mc(spc_range, args.mcep_dim, args.mcep_alpha)
                 npow_range = spc2npow(spc_range)
                 _, spcidx_range = extfrm(mcep_range, npow_range, power_threshold=args.pow)
 
+                # apperiodicity => coded one?
                 if fs >= 16000:
                     codeap_range = pw.code_aperiodicity(ap_range, fs)
                 else:
                     codeap_range = pw.code_aperiodicity(ap_range, 16000)
 
+                #
                 cont_f0_lpf_range = np.expand_dims(cont_f0_lpf_range, axis=-1)
                 uv_range = np.expand_dims(uv_range, axis=-1)
+                
+                # Reporting
                 unique, counts = np.unique(uv_range, return_counts=True)
                 logging.info(dict(zip(unique, counts)))
+                # /Reporting
 
+                # (vuv, log(lowpass(fo)), , mel_cepstrum)
                 feat_orglf0 = np.c_[uv_range,np.log(cont_f0_lpf_range),codeap_range,mcep_range]
                 logging.info(feat_orglf0.shape)
+                
+                # Save features (No.a7 ~ No.a8)
                 write_hdf5(hdf5name, "/feat_org_lf0", feat_orglf0)
-
                 write_hdf5(hdf5name, "/spcidx_range", spcidx_range)
+                # /Save features
 
                 logging.info(hdf5name)
+                
                 n_codeap = codeap_range.shape[-1]
                 for i in range(n_codeap):
                     logging.info('codeap: %d' % (i+1))
@@ -500,25 +578,40 @@ def main():
                         uv_codeap = np.expand_dims(uv_codeap_i, axis=-1)
                         cont_codeap = np.expand_dims(cont_codeap_i, axis=-1)
                     uv_codeap_i = np.expand_dims(uv_codeap_i, axis=-1)
+                    
+                    # Report results
                     unique, counts = np.unique(uv_codeap_i, return_counts=True)
                     logging.info(dict(zip(unique, counts)))
                     logging.info((uv_range==uv_codeap_i).all())
                     logging.info((uv_codeap==uv_codeap_i).all())
                     logging.info(uv_codeap.shape)
                     logging.info(cont_codeap.shape)
+                    # /Report results
+                
+                # (vuv, log(lowpass(fo)), ?, coded_apperiodicity, mel_cepstrum)
                 feat_mceplf0cap = np.c_[uv_range, np.log(cont_f0_lpf_range), uv_codeap,
                                             cont_codeap, mcep_range]
                 logging.info(feat_mceplf0cap.shape)
+                
+                # Save features (No.a9)
                 write_hdf5(hdf5name, "/feat_mceplf0cap", feat_mceplf0cap)
+                # /Save features
 
+                # Reporting parameter update
                 n_frame += feat_orglf0.shape[0]
                 if max_frame < feat_orglf0.shape[0]:
                     max_frame = feat_orglf0.shape[0]
                 if max_spc_frame < spcidx_range[0].shape[0]:
                     max_spc_frame = spcidx_range[0].shape[0]
+                # /Reporting parameter update
+                
+                ### Waveform reconstruction & Save
+                # highpass waveform: `{args.wavfiltdir}/{os.path.basename(wav_name)}
                 if args.highpass_cutoff != 0 and args.wavfiltdir is not None:
                     sf.write(os.path.join(args.wavfiltdir, os.path.basename(wav_name)),
                         x, fs, 'PCM_16')
+                
+                # melcep => envelope => w/ fo ap => (WORLD) => reconstructed waveform: `{args.wavdir}/{os.path.basename(wav_name)}`
                 wavpath = os.path.join(args.wavdir, os.path.basename(wav_name))
                 logging.info("cpu-"+str(cpu+1)+" "+wavpath)
                 sp_rec = ps.mc2sp(mcep_range, args.mcep_alpha, args.fftl)
@@ -527,6 +620,7 @@ def main():
                 logging.info(wavpath)
                 sf.write(wavpath, wav, fs, 'PCM_16')
 
+                # mel-spec => spec => (GriffinLim) => reconstructed waveform: `{args.wavgfdir}/{os.path.basename(wav_name)}`
                 recmagsp = np.matmul(melfb_t, melmagsp.T)
                 hop_length = int((args.fs/1000)*args.shiftms)
                 win_length = int((args.fs/1000)*args.winms)
@@ -535,16 +629,27 @@ def main():
                 wavpath = os.path.join(args.wavgfdir, os.path.basename(wav_name))
                 logging.info(wavpath)
                 sf.write(wavpath, wav, fs, 'PCM_16')
+                ### /Waveform reconstruction & Save
+                
+            # Run on `init` step in `run.sh`.
             else:
+                # Analysis by WORLD
                 time_axis, f0, spc, ap = analyze(x, fs=fs, fperiod=args.shiftms, fftl=args.fftl)
+                # Save No.b1: fo
                 write_hdf5(hdf5name, "/f0", f0)
+                # npow?
                 npow = spc2npow(spc)
+                # Save No.b2: 
                 write_hdf5(hdf5name, "/npow", npow)
+                
                 n_frame += f0.shape[0]
                 if max_frame < f0.shape[0]:
                     max_frame = f0.shape[0]
+            # /Run on `init` step in `run.sh`.
 
             count += 1
+        
+        # Report results
         arr[0] += n_wav
         arr[1] += n_sample
         arr[2] += n_frame
@@ -554,14 +659,15 @@ def main():
             logging.info(str(arr[0])+" "+str(n_wav)+" "+str(arr[1])+" "+str(n_sample/n_wav)+" "+\
                     str(arr[2])+" "+str(n_frame/n_wav)+" max_frame = "+str(max_frame)+\
                         " max_spc_frame = "+str(max_spc_frame))
+        # /Report results
 
+    # Execution
     # divie list
     file_lists = np.array_split(file_list, args.n_jobs)
     file_lists = [f_list.tolist() for f_list in file_lists]
     for i in range(len(file_lists)):
         logging.info('cpu-%d %d' % (i+1, len(file_lists[i])))
         logging.info(file_lists[i])
-
     # multi processing
     with mp.Manager() as manager:
         processes = []
@@ -575,15 +681,17 @@ def main():
             p.start()
             processes.append(p)
             i += 1
-
         # wait for all process
         for p in processes:
             p.join()
 
+        # Report results
         logging.info(str(arr[0])+" "+str(arr[1])+" "+str(arr[1]/arr[0])+" "+str(arr[2])+" "+\
                     str(arr[2]/arr[0]))
         logging.info('max_frame: %ld' % (np.max(max_frame_list)))
         logging.info('max_spc_frame: %ld' % (np.max(max_spc_frame_list)))
+        # /Report results
+    # /Execution
 
 
 if __name__ == "__main__":
