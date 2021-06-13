@@ -404,8 +404,14 @@ class FeatureDatasetNeuVoco(Dataset):
                 spk_code = torch.LongTensor(self.pad_feat_transform(np.ones(flen)*idx_spk))
             
             ## Item return
+            # - self.cf_dim: Return a sequence (~) or coarse/fine sequences (~_c/~_f)
             if self.wav_transform_in is not None: # laplace-disc
                 x_t = torch.LongTensor(self.pad_wav_transform(x_t)) # disc in/trg_n_bands
+                # <<<<
+                # 'x_t_c', 'x_t_f', 'x', 'x',         'feat', 'slen', 'slen_f', 'flen', 'featfile', 'c' (maybe 2nd x is mistake)
+                # 'x_t',            'x', 'x_f',       'feat', 'slen', 'slen_f', 'flen', 'featfile', 'c'
+                # 'x_t_c', 'x_t_f', 'x', 'x_f',       'feat', 'slen', 'slen_f', 'flen', 'featfile'
+                # 'x_t',            'x', 'x_f',       'feat', 'slen', 'slen_f', 'flen', 'featfile'
                 if self.spk_list is not None:
                     if self.cf_dim is not None and self.wav_transform is not None and self.wav_transform_out is None:
                         return {'x_t_c': x_t // self.cf_dim, 'x_t_f': x_t % self.cf_dim, 'x': x, 'x': x_f, 'feat': h, \
@@ -418,8 +424,15 @@ class FeatureDatasetNeuVoco(Dataset):
                                     'slen': slen, 'slen_f': slen_f, 'flen': flen, 'featfile': featfile}
                     else:
                         return {'x_t': x_t, 'x': x, 'x_f': x_f, 'feat': h, 'slen': slen, 'slen_f': slen_f, 'flen': flen, 'featfile': featfile}
+                # >>>>
             else: # disc
                 if self.spk_list is not None:
+                    # <<<<
+                    # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile', 'c'
+                    # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile', 'c', 'feat_magsp'
+                    # 'x_org',               'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile', 'c'
+                    #                        'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile', 'c'
+                    #                        'x',          'feat', 'slen', 'flen', 'featfile', 'c'
                     if self.cf_dim is not None and self.wav_transform is not None and self.wav_transform_out is None:
                         if self.worgx_flag or self.worgx_rec_flag:
                             if self.worgx_band_flag:
@@ -435,8 +448,17 @@ class FeatureDatasetNeuVoco(Dataset):
                             return {'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'c': spk_code}
                     else:
                         return {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'c': spk_code}
+                    # >>>>
                 else:
                     if self.cf_dim is not None and self.wav_transform is not None and self.wav_transform_out is None:
+                    # <<<<
+                    # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    , 'feat_org', 'feat_magsp_org', 'spk',
+                    # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    , 'feat_org', 'feat_magsp_org', 'spk', 'f0',
+                    # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    , 'feat_org', 'feat_magsp_org', 'spk',     , 'lat'
+                    # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    , 'feat_org', 'feat_magsp_org', 'spk', 'f0', 'lat'
+                    #                        'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    , 'feat_org', 'feat_magsp_org',              'lat'
+                    #                        'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    ,                             , 'spk',     , 'lat'
+                    #                        'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile',    ,                                          , 'lat'
                         if self.wlat_flag:
                             if self.worg_flag:
                                 if self.wspk_flag:
@@ -463,7 +485,13 @@ class FeatureDatasetNeuVoco(Dataset):
                                     return {'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'lat': h_lat, 'spk': h_spk, 'slen': slen, 'flen': flen, 'featfile': featfile}
                                 else:
                                     return {'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'lat': h_lat, 'slen': slen, 'flen': flen, 'featfile': featfile}
+                        # >>>>
                         else:
+                            #
+                            # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile'
+                            # 'x_org', 'x_org_band', 'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile', 'feat_magsp'
+                            # 'x_org',               'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile'
+                            #                        'x_c', 'x_f', 'feat', 'slen', 'flen', 'featfile'
                             if self.worgx_flag or self.worgx_rec_flag:
                                 if self.worgx_band_flag:
                                     ## Item used by training: x_org, x_org_band, x_c, x_f, feat, slen, flen, featfile
@@ -480,6 +508,11 @@ class FeatureDatasetNeuVoco(Dataset):
                             else:
                                 return {'x_c': x // self.cf_dim, 'x_f': x % self.cf_dim, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
                     else:
+                        # 'x', 'feat', 'feat_org', 'feat_magsp_org', 'lat', 'spk', 'slen', 'flen', 'featfile'
+                        # 'x', 'feat', 'feat_org', 'feat_magsp_org', 'lat',        'slen', 'flen', 'featfile'
+                        # 'x', 'feat',                               'lat', 'spk', 'slen', 'flen', 'featfile'
+                        # 'x', 'feat',                               'lat',        'slen', 'flen', 'featfile'
+                        # 'x', 'feat',                                             'slen', 'flen', 'featfile'
                         if self.wlat_flag:
                             if self.worg_flag:
                                 if self.wspk_flag:
@@ -493,17 +526,6 @@ class FeatureDatasetNeuVoco(Dataset):
                                     return {'x': x, 'feat': h, 'lat': h_lat, 'slen': slen, 'flen': flen, 'featfile': featfile}
                         else:
                             return {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
-                        #         !self.wlat_flag
-                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile}
-                        #         self.wlat_flag && self.worg_flag && self.wspk_flag
-                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat, 'spk': h_spk}
-                        #         self.wlat_flag && self.worg_flag && !self.wspk_flag
-                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'feat_org': h_org, 'feat_magsp_org': h_magsp_org, 'lat': h_lat}
-                        #         self.wlat_flag && !self.worg_flag && self.wspk_flag
-                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat, 'spk': h_spk}
-                        #         self.wlat_flag && !self.worg_flag && !self.wspk_flag
-                        #             {'x': x, 'feat': h, 'slen': slen, 'flen': flen, 'featfile': featfile, 'lat': h_lat}
-
         ### /multi-band
         ##################################################################################################################################################
 
