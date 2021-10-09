@@ -19,8 +19,12 @@ Clone of official implmentation of voice conversion system "CycVAE-MWDLP VC".
 - [Contact](#contact)
 
 ## Demo
-- [Samples](https://drive.google.com/drive/folders/14pJSpYsoPpLR6Ah-EbENSsN6ABcSvB0w?usp=sharing)
-- [Real-time compilable demo with CPU](https://drive.google.com/file/d/1j7ddvltaWwie0wEp79W6VL2EV-SSAW-g/view?usp=sharing)
+- MWDLP
+  - model: [demo_mwdlp-10bit_emb-v2_vcc20](https://drive.google.com/file/d/1hR7N-iCSUMNx9P-pDVxftGIIKLLyXsnt/view?usp=sharing)
+  - sample: [samples_demo_mwdlp-10bit_emb-v2_vcc20](https://drive.google.com/drive/folders/1by_BO-fkeouDgTZBWEeu6EnzaX8UgHL8?usp=sharing)
+- VC
+  - model: [demo_sparse-cyclevae-weightembv2-smpl_jnt_mwdlp-10bit_emb_vcc20](https://drive.google.com/file/d/1LtuQmnUP45iWoREbPK0vBTdu2tDZKYeT/view?usp=sharing)
+  - sample: [samples_demo_sparse-cyclevae-weightembv2-smpl_jnt_mwdlp-10bit_emb_vcc20](https://drive.google.com/drive/folders/1PanNaqsOccCImHECywzsaX6mFwausznz?usp=sharing)
 
 ## How to Use
 <!-- ### Quick training <- omit in toc ->
@@ -46,7 +50,8 @@ $ cd ..
 1. Data preparation and preprocessing
 2. VC and neural vocoder models training [~ 2.5 and 4 days each, respectively]
 3. VC fine-tuning with fixed neural vocoder [~ 2.5 days]
-4. VC decoder fine-tuning with fixed encoder and neural vocoder [~ 1.5 days]
+4. VC decoder fine-tuning with fixed encoder and neural vocoder [~ 2.5 days]
+
 #### Steps for real-time low-latency decoding with CPU:
 1. Dump and compile models
 2. Decode
@@ -76,6 +81,13 @@ Check
 
 - VC + neural vocoder: **egs/cycvae_mwdlp_vcc20/README.md**
 - neural vocoder only: **egs/mwdlp_vcc20/README.md**
+
+## References
+
+[1] [High-Fidelity and Low-Latency Universal Neural Vocoder based on Multiband WaveRNN with Data-Driven Linear Prediction for Discrete Waveform Modeling](https://arxiv.org/abs/2105.09856.pdf)
+
+[2] [Low-latency real-time non-parallel voice conversion based on cyclic variational autoencoder and multiband WaveRNN with data-driven linear prediction](https://arxiv.org/pdf/2105.09858.pdf)
+
 
 ## Contact
 Please check original repository.  

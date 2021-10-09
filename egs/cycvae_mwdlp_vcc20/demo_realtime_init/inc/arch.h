@@ -30,12 +30,28 @@
    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+/* Modified by Patrick Lumban Tobing (Nagoya University) on Sep. 2021,
+   marked by PLT_Jul21 */
 
 #ifndef ARCH_H
 #define ARCH_H
 
 #include "opus_types.h"
 #include "common.h"
+
+//PLT_Sep21
+#if defined(_MSC_VER)
+    #define WINDOWS_SYS
+    #include <windows.h>
+    #include <bcrypt.h>
+    #pragma comment(lib, "Bcrypt")
+#else
+    #if !defined(__CYGWIN__) && defined(__GNUC__ )
+    #define GNU_EXT
+    #define NRAND48_MAX 2147483647
+    #endif
+    #include <stdlib.h>
+#endif
 
 # if !defined(__GNUC_PREREQ)
 #  if defined(__GNUC__)&&defined(__GNUC_MINOR__)

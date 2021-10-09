@@ -27,14 +27,18 @@ alpha: 0.85
 ## GRU hidden units encoder, decoder spec, decoder excit
 hidden_units_enc: 512
 hidden_units_dec: 640
+
 hidden_units_lf0: 128
 
 ## GRU hidden units wavernn
-#hidden_units_wave: 704
-#hidden_units_wave: 832
-hidden_units_wave: 1184
+## for maximum performance, use 1184; for feasible usage use 1024
+hidden_units_wave: 1024
+#hidden_units_wave: 1184
 
 hidden_units_wave_2: 32
+
+## Output dimension of FC layer before GRU for wavernn
+s_dim: 320
 
 ## Output dimension of DualFC before final FC layer
 mid_dim: 16
@@ -66,9 +70,16 @@ dilation_size_wave: 1
 right_size_dec: 0
 right_size_lf0: 0
 
+## use dense relu after segmental convolution
+#s_conv_flag: false
+s_conv_flag: true
+
+## use segmental convolution
+#seg_conv_flag: false
+seg_conv_flag: true
+
 ## number of cycles :  n_half_cyc // 2
 n_half_cyc: 2
-#n_half_cyc: 4
 
 ## spect. latent dim.
 lat_dim: 96
@@ -85,14 +96,16 @@ causal_conv_lf0: true
 causal_conv_wave: false
 ## if right_size > 0 (skewed conv encoder, i.e., future frame is limited), set causal_conv dec/lf0 to true [low-latency/real-time proc.]
 
-## use dim-reduction for cont. spk. embed from 1-hot code (only for cyclevae spec-excit)
+## use segmental convolution for wavernn
+#seg_conv_flag_wave: false
+seg_conv_flag_wave: true
+
+## use dim-reduction for cont. spk. embed from 1-hot code
 #spkidtr_dim: 0
 spkidtr_dim: 2
-## to freely interpolate between 2-dim cont. spk-space
+## to interpolate between 2-dim cont. spk-space
 
-## dimension of each of data-driven time-invariant and time-variant speaker-embeddings
-#emb_spk_dim: 512
-emb_spk_dim: 1024
+## number of factorization for speaker embedding
 n_weight_emb: 4
 
 ## learning rate
@@ -105,17 +118,17 @@ do_prob: 0.5
 #step_count: 20
 step_count: 1035000
 #step_count_wave: 20
-step_count_wave: 4260000
+step_count_wave: 4350000
 
 # number of workers (threads) for batch data handling
 n_workers: 1
 #n_workers: 2
 
-mdl_name_vc: cycmelspxlf0capspkvae-gauss-smpl_sparse_noct_weightemb_v2
-mdl_name_ft: cycmelspspkvae-gauss-smpl_sparse_noct_weightemb_mwdlp_smpl_v2
-mdl_name_sp: cycmelspspkvae-ftdec-gauss-smpl_sparse_noct_wemb_mwdlp_smpl_v2
+mdl_name_vc: cycmelspxlf0capspkvae-gauss-smpl_sparse_weightemb_v2
+mdl_name_ft: cycmelspspkvae-gauss-smpl_sparse_weightemb_mwdlp_smpl_v2
+mdl_name_sp: cycmelspspkvae-ftdec-gauss-smpl_sparse_wemb_mwdlp_smpl_v2
 
-mdl_name_wave: wavernn_dualgru_compact_lpc_mband_10bit_cf_stft_emb
+mdl_name_wave: wavernn_dualgru_compact_lpc_mband_10bit_cf_stft_emb_v2
 
 ## sparsification scheduling settings for cyclevae
 #t_start_cycvae: 1
@@ -124,14 +137,15 @@ t_start_cycvae: 5000
 t_end_cycvae: 245000
 #interval_cycvae: 1
 interval_cycvae: 10
-densities_cycvae: 0.685-0.685-0.88
+densities_cycvae_enc: 0.685-0.685-0.88
+densities_cycvae_dec: 0.685-0.685-0.88
 n_stage_cycvae: 4
 
 ## sparsification scheduling settings for wavernn
 #t_start: 1
 t_start: 20000
 #t_end: 20
-t_end: 1270000
+t_end: 1070000
 #interval: 1
 interval: 20
 densities: 0.09-0.09-0.12

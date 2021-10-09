@@ -24,20 +24,21 @@
    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-/* Modified by Patrick Lumban Tobing (Nagoya University) on Sept.-Dec. 2020 - Mar. 2021,
-   marked by PLT_<Sep20/Dec20/Mar21> */
+/* Modified by Patrick Lumban Tobing (Nagoya University) on Sep. 2020 - Sep. 2021,
+   marked by PLT_<MonthYear> */
 
 #ifndef _NNET_H_
 #define _NNET_H_
+
+#include "arch.h"
 
 #define ACTIVATION_LINEAR  0
 #define ACTIVATION_SIGMOID 1
 #define ACTIVATION_TANH    2
 #define ACTIVATION_RELU    3
-#define ACTIVATION_SOFTMAX 4
-#define ACTIVATION_EXP 5 //PLT_Sep20
-#define ACTIVATION_TANHSHRINK 6 //PLT_Sep20
-#define ACTIVATION_TANH_EXP 7 //PLT_Sep20
+#define ACTIVATION_EXP 4 //PLT_Sep20
+#define ACTIVATION_TANHSHRINK 5 //PLT_Sep20
+#define ACTIVATION_TANH_EXP 6 //PLT_Sep20
 
 typedef struct {
   const float *bias;
@@ -100,11 +101,25 @@ typedef struct {
   int dim;
 } EmbeddingLayer;
 
-//PLT_Mar21
-void sgemv_accum16_(float *out, const float *weights, int rows, int cols, int col_stride, const float *x);
-void sgemv_accum(float *out, const float *weights, int rows, int cols, int col_stride, const float *x);
+//PLT_Sep21
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+    typedef struct {
+#ifdef WINDOWS_SYS
+        BCRYPT_ALG_HANDLE rng_prov;
+#else
+    #ifdef GNU_EXT
+       unsigned short int xsubi[3];
+       struct drand48_data drand_buffer[1];
+    #endif
+#endif
+    } RNGState;
+#endif
 
-void compute_activation(float *output, float *input, int N, int activation);
+//PLT_Aug21
+void sgemv_accum16_(float *out, const float *weights, int rows, int cols, const float *x);
+void sgemv_accum(float *out, const float *weights, int rows, int cols, const float *x);
+
+void compute_activation(float *output, const float *input, int N, int activation);
 
 void compute_dense(const DenseLayer *layer, float *output, const float *input);
 
@@ -113,7 +128,8 @@ void compute_dense_linear(const DenseLayer *layer, float *output, const float *i
 
 //PLT_Mar21
 void compute_mdense_mwdlp10(const MDenseLayerMWDLP10 *layer, const DenseLayer *fc_layer, const float *prev_logits,
-    float *output, const float *input, const int *last_output);
+    float *output, const float *input, const short *last_output);
+    //float *output, const float *input, const int *last_output, float* ddlpc);
 
 //PLT_Mar21
 void compute_mdense_mwdlp10_nodlpc(const MDenseLayerMWDLP10 *layer, const DenseLayer *fc_layer, float *output,
@@ -126,8 +142,12 @@ void compute_sparse_gru(const SparseGRULayer *gru, float *state, const float *in
 //PLT_Jun21
 void compute_conv1d_linear_frame_in(const Conv1DLayer *layer, float *output, float *mem, const float *input);
 
-//PLT_Sep20
-int sample_from_pdf_mwdlp(const float *pdf, int N);
+//PLT_Sep21
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+    int sample_from_pdf_mwdlp(const float *pdf, int N, RNGState *rng_state);
+#else
+    int sample_from_pdf_mwdlp(const float *pdf, int N);
+#endif
 
 //PLT_Dec20
 void compute_normalize(const NormStats *norm_stats, float *input_output);

@@ -2,6 +2,7 @@
 #define MWDLP10NET_PRIVATE_H
 
 #include "mwdlp10net.h"
+#include "nnet.h"
 #include "nnet_data.h"
 
 //PLT_Dec20
@@ -91,12 +92,12 @@ LAST n-outputs [due to frame- and pqmf-delays, w/ right-side replicate- and zero
 #define PQMF_DELAY_MBANDS PQMF_DELAY * N_MBANDS
 
 
-//PLT_Dec20
+//PLT_Sep21
 struct MWDLP10NetState {
     MWDLP10NNetState nnet;
     float mu_law_10_table[N_QUANTIZE];
-    int last_coarse[LPC_ORDER_MBANDS+NO_DLPC_MBANDS];
-    int last_fine[LPC_ORDER_MBANDS+NO_DLPC_MBANDS];
+    short last_coarse[LPC_ORDER_MBANDS+NO_DLPC_MBANDS];
+    short last_fine[LPC_ORDER_MBANDS+NO_DLPC_MBANDS];
     int frame_count;
     int sample_count;
     int first_flag;
@@ -116,6 +117,9 @@ struct MWDLP10NetState {
     float first_pqmf_state[PQMF_ORDER_MBANDS+FIRST_N_OUTPUT_MBANDS];
     //last in_state pqmf_synth filt.,(ORD+1)*NB+(ORD//2-1)*NB=ORD*NB+DELAY*NB
     float last_pqmf_state[PQMF_ORDER_MBANDS+PQMF_DELAY_MBANDS];
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+    RNGState rng_state;
+#endif
 };
 
 

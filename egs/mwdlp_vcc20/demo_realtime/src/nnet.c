@@ -25,8 +25,8 @@
    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-/* Modified by Patrick Lumban Tobing (Nagoya University) on Sept.-Dec. 2020 - Mar. 2021,
-   marked by PLT_<Sep20/Dec20/Mar21> */
+/* Modified by Patrick Lumban Tobing (Nagoya University) on Sep. 2020 - Sep. 2021,
+   marked by PLT_<MonthYear> */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -43,8 +43,6 @@
 #include "nnet_data.h"
 #include "mwdlp10net_private.h"
 
-#define SOFTMAX_HACK
-
 #ifdef __AVX__
 #include "vec_avx.h"
 #elif __ARM_NEON__
@@ -54,30 +52,30 @@
 #include "vec.h"
 #endif
 
-static OPUS_INLINE float relu(float x)
+static OPUS_INLINE float relu(const float x)
 {
    return x < 0 ? 0 : x;
 }
 
 
-//PLT_Mar21
-void sgemv_accum16_(float *out, const float *weights, int rows, int cols, int col_stride, const float *x)
+//PLT_Aug21
+void sgemv_accum16_(float *out, const float *weights, int rows, int cols, const float *x)
 {
- sgemv_accum16(out, weights, rows, cols, col_stride, x);
+ sgemv_accum16(out, weights, rows, cols, x);
 }
 
-void sgemv_accum(float *out, const float *weights, int rows, int cols, int col_stride, const float *x)
+void sgemv_accum(float *out, const float *weights, int rows, int cols, const float *x)
 {
- int i, j;
+ int i, j, k;
  for (i=0;i<rows;i++)
  {
-    for (j=0;j<cols;j++) {
-       out[i] += weights[j*col_stride + i]*x[j];
+    for (j=0,k=i;j<cols;j++,k+=rows) {
+       out[i] += weights[k]*x[j];
    }
  }
 }
 
-void compute_activation(float *output, float *input, int N, int activation)
+void compute_activation(float *output, const float *input, int N, int activation)
 {
    int i;
    if (activation == ACTIVATION_SIGMOID) {
@@ -93,28 +91,10 @@ void compute_activation(float *output, float *input, int N, int activation)
    } else if (activation == ACTIVATION_RELU) {
       for (i=0;i<N;i++)
          output[i] = relu(input[i]);
-   } else if (activation == ACTIVATION_SOFTMAX) {
-#ifdef SOFTMAX_HACK
-      for (i=0;i<N;i++)
-         output[i] = input[i];
-#else
-      float sum = 0;
-      softmax(output, input, N);
-      for (i=0;i<N;i++) {
-         sum += output[i];
-      }
-      sum = 1.f/(sum+1e-30);
-      for (i=0;i<N;i++)
-         output[i] = sum*output[i];
-#endif
-   } else {
-      //celt_assert(activation == ACTIVATION_LINEAR);
-      for (i=0;i<N;i++)
-         output[i] = input[i];
    }
 }
 
-//PLT_Mar21
+//PLT_Aug21
 void compute_dense(const DenseLayer *layer, float *output, const float *input)
 {
    int i, N;
@@ -127,11 +107,11 @@ void compute_dense(const DenseLayer *layer, float *output, const float *input)
    for (i=0;i<N;i++)
       output[i] = layer->bias[i];
    // sgemv_accum16(output, layer->input_weights, N, M, stride, input);
-   sgemv_accum16(output, layer->input_weights, N, layer->nb_inputs, N, input);
+   sgemv_accum16(output, layer->input_weights, N, layer->nb_inputs, input);
    compute_activation(output, output, N, layer->activation);
 }
 
-//PLT_Dec20
+//PLT_Aug21
 void compute_dense_linear(const DenseLayer *layer, float *output, const float *input)
 {
    int i, N;
@@ -144,22 +124,24 @@ void compute_dense_linear(const DenseLayer *layer, float *output, const float *i
    for (i=0;i<N;i++)
       output[i] = layer->bias[i];
    // sgemv_accum16(output, layer->input_weights, N, M, stride, input);
-   sgemv_accum16(output, layer->input_weights, N, layer->nb_inputs, N, input);
+   sgemv_accum16(output, layer->input_weights, N, layer->nb_inputs, input);
 }
 
-//PLT_Mar21
+//PLT_Aug21
 void compute_mdense_mwdlp10(const MDenseLayerMWDLP10 *layer, const DenseLayer *fc_layer,
-    const float *prev_logits, float *output, const float *input, const int *last_output)
+    const float *prev_logits, float *output, const float *input, const short *last_output)
+    //const float *prev_logits, float *output, const float *input, const int *last_output, float* ddlpc)
 {
     //int i, j, k, l, m, n, last_idx;
-    int i, j, k, n, last_idx;
+    int i, j, k, n;
+    short last_idx;
     float vec_out[MDENSE_OUT_DUALFC_2_MBANDS], dualfc_out[MDENSE_OUT_DUALFC_MBANDS], fc_out[MDENSE_OUT_FC_MBANDS];
     float signs[LPC_ORDER_MBANDS], mags[LPC_ORDER_MBANDS];
 
     //compute dualfc output vectors
     for (i=0;i<MDENSE_OUT_DUALFC_2_MBANDS;i++)
        vec_out[i] = layer->bias[i];
-    sgemv_accum16(vec_out, layer->input_weights, MDENSE_OUT_DUALFC_2_MBANDS, RNN_SUB_NEURONS, MDENSE_OUT_DUALFC_2_MBANDS, input);
+    sgemv_accum16(vec_out, layer->input_weights, MDENSE_OUT_DUALFC_2_MBANDS, RNN_SUB_NEURONS, input);
     compute_activation(vec_out, vec_out, MDENSE_OUT_DUALFC_2_MBANDS, layer->activation);
     //combine dualfc channels
     // [[[K,K,32]_1,...,[K,K,32]_NB]_1,[[K,K,32]_1,...,[K,K,32]_NB]_2]
@@ -200,7 +182,7 @@ void compute_mdense_mwdlp10(const MDenseLayerMWDLP10 *layer, const DenseLayer *f
 
     //refine logits with data-driven linear prediction procedure
     //for (n=0,k=0;n<N_MBANDS;n++) {
-    for (n=0;n<N_MBANDS;n++) {
+    for (n=0,k=0;n<N_MBANDS;n++) {
         //compute_activation(&fc_out[k], &fc_out[k], DLPC_ORDER, layer->activation_signs); //signs
         //k += DLPC_ORDER;
         //compute_activation(&fc_out[k], &fc_out[k], DLPC_ORDER, layer->activation_mags); //mags
@@ -209,15 +191,16 @@ void compute_mdense_mwdlp10(const MDenseLayerMWDLP10 *layer, const DenseLayer *f
         //RNN_COPY(&output[n*SQRT_QUANTIZE], &fc_out[k], SQRT_QUANTIZE);
         //k += SQRT_QUANTIZE;
         //for (i=0,j=n*SQRT_QUANTIZE,m=n*MDENSE_OUT_FC,l=m+DLPC_ORDER;i<DLPC_ORDER;i++) {
-        for (i=0,j=n*SQRT_QUANTIZE;i<DLPC_ORDER;i++) {
+        for (i=0,j=n*SQRT_QUANTIZE;i<DLPC_ORDER;i++,k++) {
             last_idx = last_output[i*N_MBANDS+n];
-            output[j+last_idx] += signs[i]*mags[i]*prev_logits[last_idx];
-            //output[j+last_idx] += fc_out[m+i]*fc_out[l+i]*prev_logits[last_idx];
+            output[j+last_idx] += signs[k]*mags[k]*prev_logits[last_idx];
+            //ddlpc[k] = signs[k]*mags[k];
+            //output[j+last_idx] += ddlpc[k]*prev_logits[last_idx];
         }
     }
 }
 
-//PLT_Mar21
+//PLT_Aug21
 void compute_mdense_mwdlp10_nodlpc(const MDenseLayerMWDLP10 *layer, const DenseLayer *fc_layer, float *output,
     const float *input)
 {
@@ -228,7 +211,7 @@ void compute_mdense_mwdlp10_nodlpc(const MDenseLayerMWDLP10 *layer, const DenseL
     //mid-logits by dualfc
     for (i=0;i<MID_OUT_MBANDS_2;i++)
        vec_out[i] = layer->bias[i];
-    sgemv_accum16(vec_out, layer->input_weights, MID_OUT_MBANDS_2, RNN_SUB_NEURONS, MID_OUT_MBANDS_2, input);
+    sgemv_accum16(vec_out, layer->input_weights, MID_OUT_MBANDS_2, RNN_SUB_NEURONS, input);
     compute_activation(vec_out, vec_out, MID_OUT_MBANDS_2, layer->activation);
     //combine dualfc channels
     sgev_dualfc8(dualfc_out, layer->factors, MDENSE_OUT_DUALFC_2_MBANDS, vec_out);
@@ -241,7 +224,7 @@ void compute_mdense_mwdlp10_nodlpc(const MDenseLayerMWDLP10 *layer, const DenseL
     compute_activation(output, output, SQRT_QUANTIZE_MBANDS, layer->activation_logits);
 }
 
-//PLT_Sep20
+//PLT_Aug21
 void compute_gru3(const GRULayer *gru, float *state, const float *input)
 {
    int i;
@@ -263,7 +246,7 @@ void compute_gru3(const GRULayer *gru, float *state, const float *input)
    RNN_COPY(zrh, input, RNN_SUB_NEURONS_3);
    for (i=0;i<RNN_SUB_NEURONS_3;i++)
       recur[i] = gru->bias[i];
-   sgemv_accum16(recur, gru->recurrent_weights, RNN_SUB_NEURONS_3, RNN_SUB_NEURONS, RNN_SUB_NEURONS_3, state);
+   sgemv_accum16(recur, gru->recurrent_weights, RNN_SUB_NEURONS_3, RNN_SUB_NEURONS, state);
    for (i=0;i<RNN_SUB_NEURONS_2;i++)
       zrh[i] += recur[i];
    compute_activation(zrh, zrh, RNN_SUB_NEURONS_2, ACTIVATION_SIGMOID);
@@ -314,10 +297,10 @@ void compute_sparse_gru(const SparseGRULayer *gru, float *state, const float *in
       state[i] = r[i]*state[i] + (1-r[i])*h[i];
 }
 
-//PLT_Jun21
+//PLT_Aug21
 void compute_conv1d_linear_frame_in(const Conv1DLayer* layer, float* output, float* mem, const float* input)
 {
-    float tmp[FEATURE_CONV_OUT_SIZE]; //set to input_size*kernel_size
+    float tmp[FEATURE_CONV_INPUT_SIZE]; //set to input_size*kernel_size
     //celt_assert(input != output);
     RNN_COPY(tmp, mem, FEATURE_CONV_STATE_SIZE); //get state_size of last frame (in*(kernel_size-1))
     RNN_COPY(&tmp[FEATURE_CONV_STATE_SIZE], input, FEATURES_DIM); //append current input frame
@@ -329,20 +312,24 @@ void compute_conv1d_linear_frame_in(const Conv1DLayer* layer, float* output, flo
     // compute conv
     for (int i = 0; i < FEATURE_CONV_OUT_SIZE; i++)
         output[i] = layer->bias[i];
-    sgemv_accum16(output, layer->input_weights, FEATURE_CONV_OUT_SIZE, FEATURE_CONV_OUT_SIZE, FEATURE_CONV_OUT_SIZE, tmp);
+    sgemv_accum16(output, layer->input_weights, FEATURE_CONV_OUT_SIZE, FEATURE_CONV_INPUT_SIZE, tmp);
     //no activation (linear)
     RNN_COPY(mem, &tmp[FEATURES_DIM], FEATURE_CONV_STATE_SIZE); //set state size for next frame
 }
 
-//PLT_Sep20
+//PLT_Sep21
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+int sample_from_pdf_mwdlp(const float *pdf, int N, RNGState *rng_state)
+#else
 int sample_from_pdf_mwdlp(const float *pdf, int N)
+#endif
 {
     int i;
     float r;
     float tmp[SQRT_QUANTIZE], cdf[SQRT_QUANTIZE], sum, norm;
     for (i=0;i<N;i++)
         tmp[i] = pdf[i];
-    softmax(tmp, tmp, N);
+    vec_exp_softmax(tmp, tmp, N);
     for (i=0,sum=0;i<N;i++)
         sum += tmp[i];
     norm = 1.f/sum;
@@ -351,7 +338,19 @@ int sample_from_pdf_mwdlp(const float *pdf, int N)
     for (i=1;i<N;i++)
         cdf[i] = cdf[i-1] + norm*tmp[i-1];
     /* Do the sampling (from the cdf). */
-    r = (float) rand() / RAND_MAX; //r ~ [0,1]
+#ifdef WINDOWS_SYS
+    UINT buffer = 0;
+    BCryptGenRandom(rng_state->rng_prov, (PUCHAR)(&buffer), sizeof(buffer), 0);
+    r = (float)buffer / UINT_MAX;
+#else
+    #ifdef GNU_EXT
+    long int rand_num = 0;
+    nrand48_r(rng_state->xsubi, rng_state->drand_buffer, &rand_num); // res ~ [0,2^31-1]
+    r = (float) rand_num / NRAND48_MAX; //r ~ [0,1]
+    #else
+    r = (float) random() / RAND_MAX; //r ~ [0,1]
+    #endif
+#endif
     for (i=N-1;i>0;i--)
         if (r >= cdf[i]) return i; //largest cdf that is less/equal than r
     return 0;

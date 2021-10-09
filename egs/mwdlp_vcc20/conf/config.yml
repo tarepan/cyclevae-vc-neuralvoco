@@ -25,11 +25,14 @@ mel_dim: 80
 alpha: 0.85
 
 ## GRU hidden units wavernn
-#hidden_units_wave: 704
-#hidden_units_wave: 832
-hidden_units_wave: 1184
+## for maximum performance, use 1184; for feasible usage use 1024
+hidden_units_wave: 1024
+#hidden_units_wave: 1184
 
 hidden_units_wave_2: 32
+
+## Output dimension of FC layer before GRU for wavernn
+s_dim: 320
 
 ## Output dimension of DualFC before final FC layer
 mid_dim: 16
@@ -47,6 +50,10 @@ dilation_size_wave: 1
 causal_conv_wave: false
 ## if right_size > 0 (skewed conv encoder, i.e., future frame is limited), set causal_conv dec/lf0 to true [low-latency/real-time proc.]
 
+## use segmental convolution for wavernn
+#seg_conv_flag_wave: false
+seg_conv_flag_wave: true
+
 ## learning rate
 lr: 1e-4
 
@@ -55,19 +62,19 @@ do_prob: 0.5
 
 ## maximum step count
 #step_count_wave: 20
-step_count_wave: 4260000
+step_count_wave: 4350000
 
 # number of workers (threads) for batch data handling
 n_workers: 1
 #n_workers: 2
 
-mdl_name_wave: wavernn_dualgru_compact_lpc_mband_10bit_cf_stft_emb
+mdl_name_wave: wavernn_dualgru_compact_lpc_mband_10bit_cf_stft_emb_v2
 
 ## sparsification scheduling settings for wavernn
 #t_start: 1
 t_start: 20000
 #t_end: 20
-t_end: 1270000
+t_end: 1070000
 #interval: 1
 interval: 20
 densities: 0.09-0.09-0.12
