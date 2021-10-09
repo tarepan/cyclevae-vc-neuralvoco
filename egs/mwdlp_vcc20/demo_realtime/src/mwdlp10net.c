@@ -23,8 +23,8 @@
    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-/* Modified by Patrick Lumban Tobing (Nagoya University) on Dec. 2020 - Mar. 2021,
-   marked by PLT_<Dec20/Jan21/Mar21> */
+/* Modified by Patrick Lumban Tobing (Nagoya University) on Dec. 2020 - Sep. 2021,
+   marked by PLT_<MonthYear> */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -94,10 +94,12 @@ static void run_frame_network_mwdlp10(MWDLP10NNetState *net, float *gru_a_condit
 }
 
 
-//PLT_Mar21
+//PLT_Aug21
 static void run_sample_network_mwdlp10_coarse(MWDLP10NNetState *net, const EmbeddingLayer *a_embed_coarse,
-    const EmbeddingLayer *a_embed_fine, const EmbeddingLayer *prev_logits_coarse, float *pdf,
-        const float *gru_a_condition, const float *gru_b_condition, int *last_coarse, int *last_fine)
+    const EmbeddingLayer *a_embed_fine, const EmbeddingLayer *prev_logits_c, float *pdf,
+        const float *gru_a_condition, const float *gru_b_condition, short *last_coarse, short *last_fine)
+        //const float *gru_a_condition, const float *gru_b_condition, int *last_coarse, int *last_fine,
+        //    float *ddlpc)
 {
     int i, j, idx_bands, idx_coarse, idx_fine;
     float gru_a_input[RNN_MAIN_NEURONS_3];
@@ -118,17 +120,19 @@ static void run_sample_network_mwdlp10_coarse(MWDLP10NNetState *net, const Embed
     //copy input conditioning * GRU_input_cond_weights + bias contribution (b)
     RNN_COPY(gru_b_input, gru_b_condition, RNN_SUB_NEURONS_3);
     //compute gru_a state contribution to gru_b
-    sgemv_accum16_(gru_b_input, (&gru_b_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_MAIN_NEURONS,
-        RNN_SUB_NEURONS_3, net->gru_a_state);
+    sgemv_accum16_(gru_b_input, (&gru_b_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_MAIN_NEURONS, net->gru_a_state);
     //compute gru_b and coarse_output
     compute_gru3(&gru_b, net->gru_b_state, gru_b_input);
-    compute_mdense_mwdlp10(&dual_fc_coarse, &fc_out_coarse, prev_logits_coarse->embedding_weights, pdf, net->gru_b_state, last_coarse);
+    compute_mdense_mwdlp10(&dual_fc_coarse, &fc_out_coarse, prev_logits_c->embedding_weights, pdf, net->gru_b_state, last_coarse);
+    //compute_mdense_mwdlp10(&dual_fc_coarse, &fc_out_coarse, prev_logits_c->embedding_weights, pdf, net->gru_b_state, last_coarse, ddlpc);
 }
 
 
-//PLT_Mar21
+//PLT_Aug21
 static void run_sample_network_mwdlp10_fine(MWDLP10NNetState *net, const EmbeddingLayer *c_embed_coarse,
-    const EmbeddingLayer *prev_logits_fine, float *pdf, const float *gru_c_condition, int *coarse, int *last_fine)
+    const EmbeddingLayer *prev_logits_f, float *pdf, const float *gru_c_condition, short *coarse, short *last_fine)
+    //const EmbeddingLayer *prev_logits_f, float *pdf, const float *gru_c_condition, int *coarse, int *last_fine,
+    //    float *ddlpc)
 {
     int i, j, idx_coarse;
     float gru_c_input[RNN_SUB_NEURONS_3];
@@ -141,18 +145,18 @@ static void run_sample_network_mwdlp10_fine(MWDLP10NNetState *net, const Embeddi
             gru_c_input[j] += c_embed_coarse->embedding_weights[idx_coarse + j];
     }
     //compute gru_b state contribution to gru_c
-    sgemv_accum16_(gru_c_input, (&gru_c_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_SUB_NEURONS,
-        RNN_SUB_NEURONS_3, net->gru_b_state);
+    sgemv_accum16_(gru_c_input, (&gru_c_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_SUB_NEURONS, net->gru_b_state);
     //compute gru_c and fine_output
     compute_gru3(&gru_c, net->gru_c_state, gru_c_input);
-    compute_mdense_mwdlp10(&dual_fc_fine, &fc_out_fine, prev_logits_fine->embedding_weights, pdf, net->gru_c_state, last_fine);
+    compute_mdense_mwdlp10(&dual_fc_fine, &fc_out_fine, prev_logits_f->embedding_weights, pdf, net->gru_c_state, last_fine);
+    //compute_mdense_mwdlp10(&dual_fc_fine, &fc_out_fine, prev_logits_f->embedding_weights, pdf, net->gru_c_state, last_fine, ddlpc);
 }
 
 
-//PLT_Mar21
+//PLT_Aug21
 static void run_sample_network_mwdlp10_coarse_nodlpc(MWDLP10NNetState *net, const EmbeddingLayer *a_embed_coarse,
     const EmbeddingLayer *a_embed_fine, float *pdf, const float *gru_a_condition, const float *gru_b_condition,
-        int *last_coarse, int *last_fine)
+        short *last_coarse, short *last_fine)
 {
     int i, j, idx_bands, idx_coarse, idx_fine;
     float gru_a_input[RNN_MAIN_NEURONS_3];
@@ -173,17 +177,16 @@ static void run_sample_network_mwdlp10_coarse_nodlpc(MWDLP10NNetState *net, cons
     //copy input conditioning * GRU_input_cond_weights + bias contribution (b)
     RNN_COPY(gru_b_input, gru_b_condition, RNN_SUB_NEURONS_3);
     //compute gru_a state contribution to gru_b
-    sgemv_accum16_(gru_b_input, (&gru_b_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_MAIN_NEURONS,
-        RNN_SUB_NEURONS_3, net->gru_a_state);
+    sgemv_accum16_(gru_b_input, (&gru_b_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_MAIN_NEURONS, net->gru_a_state);
     //compute gru_b and coarse_output
     compute_gru3(&gru_b, net->gru_b_state, gru_b_input);
     compute_mdense_mwdlp10_nodlpc(&dual_fc_coarse, &fc_out_coarse, pdf, net->gru_b_state);
 }
 
 
-//PLT_Mar21
+//PLT_Aug21
 static void run_sample_network_mwdlp10_fine_nodlpc(MWDLP10NNetState *net, const EmbeddingLayer *c_embed_coarse, float *pdf,
-    const float *gru_c_condition, int *coarse)
+    const float *gru_c_condition, short *coarse)
 {
     int i, j, idx_coarse;
     float gru_c_input[RNN_SUB_NEURONS_3];
@@ -196,8 +199,7 @@ static void run_sample_network_mwdlp10_fine_nodlpc(MWDLP10NNetState *net, const 
             gru_c_input[j] += c_embed_coarse->embedding_weights[idx_coarse + j];
     }
     //compute gru_b state contribution to gru_c
-    sgemv_accum16_(gru_c_input, (&gru_c_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_SUB_NEURONS,
-        RNN_SUB_NEURONS_3, net->gru_b_state);
+    sgemv_accum16_(gru_c_input, (&gru_c_dense_feature_state)->input_weights, RNN_SUB_NEURONS_3, RNN_SUB_NEURONS, net->gru_b_state);
     //compute gru_c and fine_output
     compute_gru3(&gru_c, net->gru_c_state, gru_c_input);
     compute_mdense_mwdlp10_nodlpc(&dual_fc_fine, &fc_out_fine, pdf, net->gru_c_state);
@@ -211,13 +213,13 @@ MWDLP10NET_EXPORT int mwdlp10net_get_size()
 }
 
 
-//PLT_Dec20
+//PLT_Sep21
 MWDLP10NET_EXPORT MWDLP10NetState *mwdlp10net_create()
 {
     MWDLP10NetState *mwdlp10net;
     mwdlp10net = (MWDLP10NetState *) calloc(1,mwdlp10net_get_size());
     if (mwdlp10net != NULL) {
-        if (FIRST_N_OUTPUT == 0) mwdlp10net->first_flag = 1;
+        if (!FIRST_N_OUTPUT) mwdlp10net->first_flag = 1;
         int i, j, k;
         if (!NO_DLPC) {
             for (i=0, k=0;i<DLPC_ORDER;i++)
@@ -229,6 +231,24 @@ MWDLP10NET_EXPORT MWDLP10NetState *mwdlp10net_create()
         }
         for (i=0;i<N_QUANTIZE;i++)
             mwdlp10net->mu_law_10_table[i] = mu_law_10_table[i];
+#ifdef WINDOWS_SYS
+        if (!BCRYPT_SUCCESS(
+            BCryptOpenAlgorithmProvider(&mwdlp10net->rng_state.rng_prov, BCRYPT_RNG_ALGORITHM,
+                NULL, 0))) {
+            /* handle error */
+            printf("error: cannot initialize bcrypt rng algo. provider\n");
+            exit(EXIT_FAILURE);
+        }
+#else
+    #ifdef GNU_EXT
+        mwdlp10net->rng_state.xsubi[0] = (unsigned short int)(time(NULL) & 0xffff);
+        mwdlp10net->rng_state.xsubi[1] = (unsigned short int)((time(NULL) >> 16) & 0xffff);
+        mwdlp10net->rng_state.xsubi[2] = (unsigned short int)((time(NULL) >> 32) & 0xffff);
+        seed48_r(mwdlp10net->rng_state.xsubi, mwdlp10net->rng_state.drand_buffer);
+    #else
+        srandom((unsigned int)time(NULL));
+    #endif    
+#endif    
         return mwdlp10net;
     }
     printf("Cannot allocate and initialize memory for MWDLP10NetState.\n");
@@ -237,34 +257,42 @@ MWDLP10NET_EXPORT MWDLP10NetState *mwdlp10net_create()
 }
 
 
-//PLT_Dec20
+//PLT_Jun21
 MWDLP10NET_EXPORT void mwdlp10net_destroy(MWDLP10NetState *mwdlp10net)
 {
+#ifdef WINDOWS_SYS
+    BCryptCloseAlgorithmProvider(mwdlp10net->rng_state.rng_prov, 0);
+#endif
     if (mwdlp10net != NULL) free(mwdlp10net);
 }
 
 
-//PLT_Jan21
+//PLT_Sep21
 MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const float *features,
     short *output, int *n_output, int flag_last_frame)
+    //short *output, int *n_output, int flag_last_frame, float *out_ddlpc_coarse, float *out_ddlpc_fine, short *pcm_band)
 {
     int i, j, k, l, m;
-    int coarse[N_MBANDS];
-    int fine[N_MBANDS];
+    short coarse[N_MBANDS];
+    short fine[N_MBANDS];
     float pdf[SQRT_QUANTIZE_MBANDS];
     float gru_a_condition[RNN_MAIN_NEURONS_3];
     float gru_b_condition[RNN_SUB_NEURONS_3];
     float gru_c_condition[RNN_SUB_NEURONS_3];
+    //float ddlpc[LPC_ORDER_MBANDS];
     const EmbeddingLayer *a_embed_coarse = &gru_a_embed_coarse;
     const EmbeddingLayer *a_embed_fine = &gru_a_embed_fine;
     const EmbeddingLayer *c_embed_coarse = &gru_c_embed_coarse;
     const EmbeddingLayer *prev_logits_c = &prev_logits_coarse;
     const EmbeddingLayer *prev_logits_f = &prev_logits_fine;
     MWDLP10NNetState *nnet = &mwdlp10net->nnet;
-    int *last_coarse_mb_pt = &mwdlp10net->last_coarse[N_MBANDS];
-    int *last_coarse_0_pt = &mwdlp10net->last_coarse[0];
-    int *last_fine_mb_pt = &mwdlp10net->last_fine[N_MBANDS];
-    int *last_fine_0_pt = &mwdlp10net->last_fine[0];
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+    RNGState *rng_state = &mwdlp10net->rng_state;
+#endif
+    short *last_coarse_mb_pt = &mwdlp10net->last_coarse[N_MBANDS];
+    short *last_coarse_0_pt = &mwdlp10net->last_coarse[0];
+    short *last_fine_mb_pt = &mwdlp10net->last_fine[N_MBANDS];
+    short *last_fine_0_pt = &mwdlp10net->last_fine[0];
     float tmp_out;
     float *pqmf_state_0_pt = &mwdlp10net->pqmf_state[0];
     float *pqmf_state_mbsqr_pt = &mwdlp10net->pqmf_state[N_MBANDS_SQR];
@@ -275,16 +303,8 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
         float in[FEATURES_DIM];
         RNN_COPY(in, features, FEATURES_DIM);
         compute_normalize(&feature_norm, in); //feature normalization
-        //float conv_in[FEATURES_DIM];
-        //float conv_in_in[FEATURE_CONV_IN_IN_OUT_SIZE];
-        //float conv_in_out[FEATURES_DIM];
-        //compute_dense(&feature_conv_in, conv_in, in);
-        //compute_dense(&feature_conv_in_in, conv_in_in, in);
-        //compute_dense(&feature_conv_in_out, conv_in_out, conv_in_in);
         if (mwdlp10net->frame_count == 0) //pad_first
             for (i=0;i<CONV_KERNEL_1;i++) //store first input with replicate padding kernel_size-1
-                //RNN_COPY(&mem[i*FEATURES_DIM], conv_in, FEATURES_DIM);
-                //RNN_COPY(&mem[i*FEATURES_DIM], conv_in_out, FEATURES_DIM);
                 RNN_COPY(&mem[i*FEATURES_DIM], in, FEATURES_DIM);
         else {
             RNN_MOVE(mem, &mem[FEATURES_DIM], FEATURE_CONV_STATE_SIZE_1); //store previous input kernel_size-2
@@ -300,19 +320,28 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
             //coarse
             run_sample_network_mwdlp10_coarse(nnet, a_embed_coarse, a_embed_fine, prev_logits_c, pdf,
                     gru_a_condition, gru_b_condition, mwdlp10net->last_coarse, mwdlp10net->last_fine);
+                    //gru_a_condition, gru_b_condition, mwdlp10net->last_coarse, mwdlp10net->last_fine, ddlpc);
+            //RNN_COPY(&out_ddlpc_coarse[i*LPC_ORDER_MBANDS], ddlpc, LPC_ORDER_MBANDS);
             for (j=0;j<N_MBANDS;j++)
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                coarse[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                 coarse[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
             //fine
             run_sample_network_mwdlp10_fine(nnet, c_embed_coarse, prev_logits_f, pdf, gru_c_condition, coarse, mwdlp10net->last_fine);
+            //run_sample_network_mwdlp10_fine(nnet, c_embed_coarse, prev_logits_f, pdf, gru_c_condition, coarse, mwdlp10net->last_fine, ddlpc);
+            //RNN_COPY(&out_ddlpc_fine[i*LPC_ORDER_MBANDS], ddlpc, LPC_ORDER_MBANDS);
             //printf("\n");
             for (j=0;j<N_MBANDS;j++) {
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                fine[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                 fine[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
                 mwdlp10net->buffer_output[j] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*N_MBANDS;
             //    printf("[%d] %d %d %d %f ", j+1, coarse[j], fine[j], coarse[j]*SQRT_QUANTIZE+fine[j], mwdlp10net->buffer_output[j]);
-                //if (j==0) pcm_1[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
-                //else if (j==1) pcm_2[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
-                //else if (j==2) pcm_3[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
-                //else if (j==3) pcm_4[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
+                //pcm_band[j*N_SAMPLE_BANDS+i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
             }
             //printf("\n");
             //update state of last_coarse and last_fine integer output
@@ -331,7 +360,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                     for (j=0;j<N_MBANDS;j++,m++) {
                         tmp_out = 0;
                         //pqmf_synth
-                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1,
+                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS,
                             &mwdlp10net->pqmf_state[j*N_MBANDS]);
                         //clamp
                         if (tmp_out < -1) tmp_out = -1;
@@ -343,7 +372,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                         if (tmp_out < -1) tmp_out = -1;
                         else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                         // 16bit pcm signed
-                        output[m] = round(tmp_out * 32768);
+                        output[m] = (short)round(tmp_out * 32768);
                     }
                 } else {
                     //synthesis first n=((pqmf_order+1) % n_bands) samples
@@ -356,7 +385,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                     for (j=0;j<FIRST_N_OUTPUT;j++,m++) {
                         tmp_out = 0;
                         //pqmf_synth
-                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1,
+                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS,
                             &mwdlp10net->first_pqmf_state[j*N_MBANDS]);
                         //clamp
                         if (tmp_out < -1) tmp_out = -1;
@@ -368,7 +397,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                         if (tmp_out < -1) tmp_out = -1;
                         else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                         //16bit pcm signed
-                        output[m] = round(tmp_out * 32768);
+                        output[m] = (short)round(tmp_out * 32768);
                     }
                     mwdlp10net->first_flag = 1;
                     *n_output += FIRST_N_OUTPUT;
@@ -376,7 +405,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                     for (k=0;k<N_MBANDS;k++,m++) {
                         tmp_out = 0;
                         //pqmf_synth
-                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1,
+                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS,
                             &mwdlp10net->pqmf_state[k*N_MBANDS]);
                         //clamp
                         if (tmp_out < -1) tmp_out = -1;
@@ -388,7 +417,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                         if (tmp_out < -1) tmp_out = -1;
                         else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                         //16bit pcm signed
-                        output[m] = round(tmp_out * 32768);
+                        output[m] = (short)round(tmp_out * 32768);
                     }
                 }
                 *n_output += N_MBANDS;
@@ -405,15 +434,28 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                 //coarse
                 run_sample_network_mwdlp10_coarse(nnet, a_embed_coarse, a_embed_fine, prev_logits_c, pdf,
                         gru_a_condition, gru_b_condition, mwdlp10net->last_coarse, mwdlp10net->last_fine);
+                        //gru_a_condition, gru_b_condition, mwdlp10net->last_coarse, mwdlp10net->last_fine, ddlpc);
+                //RNN_COPY(&out_ddlpc_coarse[i*LPC_ORDER_MBANDS], ddlpc, LPC_ORDER_MBANDS);
                 for (j=0;j<N_MBANDS;j++)
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                    coarse[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                     coarse[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
                 //fine
                 run_sample_network_mwdlp10_fine(nnet, c_embed_coarse, prev_logits_f, pdf, gru_c_condition, coarse,
                     mwdlp10net->last_fine);
+                    //mwdlp10net->last_fine, ddlpc);
+                //RNN_COPY(&out_ddlpc_fine[i*LPC_ORDER_MBANDS], ddlpc, LPC_ORDER_MBANDS);
                 for (j=0;j<N_MBANDS;j++) {
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                    fine[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                     fine[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
                     //float,[-1,1),upsample-bands(x n_bands)
                     mwdlp10net->buffer_output[j] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*N_MBANDS;
+                    //pcm_band[j*N_SAMPLE_BANDS+i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
                 }
                 //update state of last_coarse and last_fine integer output
                 //last_output: [[o_1,...,o_N]_1,...,[o_1,...,o_N]_K]; K: DLPC_ORDER
@@ -429,7 +471,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                 for (j=0;j<N_MBANDS;j++,m++) {
                     tmp_out = 0;
                     //pqmf_synth
-                    sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1, &mwdlp10net->pqmf_state[j*N_MBANDS]);
+                    sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, &mwdlp10net->pqmf_state[j*N_MBANDS]);
                     //clamp
                     if (tmp_out < -1) tmp_out = -1;
                     else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
@@ -440,7 +482,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
                     if (tmp_out < -1) tmp_out = -1;
                     else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                     //16bit pcm signed
-                    output[m] = round(tmp_out * 32768);
+                    output[m] = (short)round(tmp_out * 32768);
                 }
                 *n_output += N_MBANDS;
             }    
@@ -451,7 +493,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
         for  (i=0;i<PQMF_DELAY;i++,m++) {
             tmp_out = 0;
             //pqmf_synth
-            sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1, &mwdlp10net->last_pqmf_state[i*N_MBANDS]);
+            sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, &mwdlp10net->last_pqmf_state[i*N_MBANDS]);
             //clamp
             if (tmp_out < -1) tmp_out = -1;
             else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
@@ -462,7 +504,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
             if (tmp_out < -1) tmp_out = -1;
             else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
             //16bit pcm signed
-            output[m] = round(tmp_out * 32768);
+            output[m] = (short)round(tmp_out * 32768);
         }
         *n_output += PQMF_DELAY;
     }
@@ -470,9 +512,10 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize(MWDLP10NetState *mwdlp10net, const 
 }
 
 
-//PLT_Mar21
+//PLT_Sep21
 MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net, const float *features,
     short *output, int *n_output, int flag_last_frame)
+    //short *output, int *n_output, int flag_last_frame, short *pcm_band)
 {
     int i, j, k, l, m;
     //int coarse[N_MBANDS];
@@ -485,8 +528,11 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
     const EmbeddingLayer *a_embed_fine = &gru_a_embed_fine;
     const EmbeddingLayer *c_embed_coarse = &gru_c_embed_coarse;
     MWDLP10NNetState *nnet = &mwdlp10net->nnet;
-    int *last_coarse_0_pt = &mwdlp10net->last_coarse[0];
-    int *last_fine_0_pt = &mwdlp10net->last_fine[0];
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+    RNGState *rng_state = &mwdlp10net->rng_state;
+#endif
+    short *last_coarse_0_pt = &mwdlp10net->last_coarse[0];
+    short *last_fine_0_pt = &mwdlp10net->last_fine[0];
     float tmp_out;
     float *pqmf_state_0_pt = &mwdlp10net->pqmf_state[0];
     float *pqmf_state_mbsqr_pt = &mwdlp10net->pqmf_state[N_MBANDS_SQR];
@@ -497,16 +543,8 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
         float in[FEATURES_DIM];
         RNN_COPY(in, features, FEATURES_DIM);
         compute_normalize(&feature_norm, in); //feature normalization
-        //float conv_in[FEATURES_DIM];
-        //float conv_in_in[FEATURE_CONV_IN_IN_OUT_SIZE];
-        //float conv_in_out[FEATURES_DIM];
-        //compute_dense(&feature_conv_in, conv_in, in);
-        //compute_dense(&feature_conv_in_in, conv_in_in, in);
-        //compute_dense(&feature_conv_in_out, conv_in_out, conv_in_in);
         if (mwdlp10net->frame_count == 0) //pad_first
             for (i=0;i<CONV_KERNEL_1;i++) //store first input with replicate padding kernel_size-1
-                //RNN_COPY(&mem[i*FEATURES_DIM], conv_in, FEATURES_DIM);
-                //RNN_COPY(&mem[i*FEATURES_DIM], conv_in_out, FEATURES_DIM);
                 RNN_COPY(&mem[i*FEATURES_DIM], in, FEATURES_DIM);
         else {
             RNN_MOVE(mem, &mem[FEATURES_DIM], FEATURE_CONV_STATE_SIZE_1); //store previous input kernel_size-2
@@ -523,18 +561,23 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
             run_sample_network_mwdlp10_coarse_nodlpc(nnet, a_embed_coarse, a_embed_fine, pdf,
                     gru_a_condition, gru_b_condition, last_coarse_0_pt, last_fine_0_pt);
             for (j=0;j<N_MBANDS;j++)
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                last_coarse_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                 last_coarse_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
             //fine
             run_sample_network_mwdlp10_fine_nodlpc(nnet, c_embed_coarse, pdf, gru_c_condition, last_coarse_0_pt);
             //printf("\n");
             for (j=0;j<N_MBANDS;j++) {
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                last_fine_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                 last_fine_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
                 mwdlp10net->buffer_output[j] = mwdlp10net->mu_law_10_table[last_coarse_0_pt[j] * SQRT_QUANTIZE + last_fine_0_pt[j]]*N_MBANDS;
             //    printf("[%d] %d %d %d %f ", j+1, coarse[j], fine[j], coarse[j]*SQRT_QUANTIZE+fine[j], mwdlp10net->buffer_output[j]);
-                //if (j==0) pcm_1[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
-                //else if (j==1) pcm_2[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
-                //else if (j==2) pcm_3[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
-                //else if (j==3) pcm_4[i] = mwdlp10net->mu_law_10_table[coarse[j] * SQRT_QUANTIZE + fine[j]]*32768;
+                //pcm_band[j*N_SAMPLE_BANDS+i] = mwdlp10net->mu_law_10_table[last_coarse_0_pt[j] * SQRT_QUANTIZE + last_fine_0_pt[j]]*32768;
             }
             //printf("\n");
             //update state of last_coarse and last_fine integer output
@@ -551,7 +594,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                     for (j=0;j<N_MBANDS;j++,m++) {
                         tmp_out = 0;
                         //pqmf_synth
-                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1,
+                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS,
                             &mwdlp10net->pqmf_state[j*N_MBANDS]);
                         //clamp
                         if (tmp_out < -1) tmp_out = -1;
@@ -563,7 +606,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                         if (tmp_out < -1) tmp_out = -1;
                         else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                         // 16bit pcm signed
-                        output[m] = round(tmp_out * 32768);
+                        output[m] = (short)round(tmp_out * 32768);
                     }
                 } else {
                     //synthesis first n=((pqmf_order+1) % n_bands) samples
@@ -576,7 +619,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                     for (j=0;j<FIRST_N_OUTPUT;j++,m++) {
                         tmp_out = 0;
                         //pqmf_synth
-                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1,
+                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS,
                             &mwdlp10net->first_pqmf_state[j*N_MBANDS]);
                         //clamp
                         if (tmp_out < -1) tmp_out = -1;
@@ -588,7 +631,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                         if (tmp_out < -1) tmp_out = -1;
                         else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                         //16bit pcm signed
-                        output[m] = round(tmp_out * 32768);
+                        output[m] = (short)round(tmp_out * 32768);
                     }
                     mwdlp10net->first_flag = 1;
                     *n_output += FIRST_N_OUTPUT;
@@ -596,7 +639,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                     for (k=0;k<N_MBANDS;k++,m++) {
                         tmp_out = 0;
                         //pqmf_synth
-                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1,
+                        sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS,
                             &mwdlp10net->pqmf_state[k*N_MBANDS]);
                         //clamp
                         if (tmp_out < -1) tmp_out = -1;
@@ -608,7 +651,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                         if (tmp_out < -1) tmp_out = -1;
                         else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                         //16bit pcm signed
-                        output[m] = round(tmp_out * 32768);
+                        output[m] = (short)round(tmp_out * 32768);
                     }
                 }
                 *n_output += N_MBANDS;
@@ -626,13 +669,22 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                 run_sample_network_mwdlp10_coarse_nodlpc(nnet, a_embed_coarse, a_embed_fine, pdf,
                         gru_a_condition, gru_b_condition, last_coarse_0_pt, last_fine_0_pt);
                 for (j=0;j<N_MBANDS;j++)
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                    last_coarse_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                     last_coarse_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
                 //fine
                 run_sample_network_mwdlp10_fine_nodlpc(nnet, c_embed_coarse, pdf, gru_c_condition, last_coarse_0_pt);
                 for (j=0;j<N_MBANDS;j++) {
+#if defined(WINDOWS_SYS) || defined (GNU_EXT)
+                    last_fine_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE, rng_state);
+#else
                     last_fine_0_pt[j] = sample_from_pdf_mwdlp(&pdf[j*SQRT_QUANTIZE], SQRT_QUANTIZE);
+#endif
                     //float,[-1,1),upsample-bands(x n_bands)
                     mwdlp10net->buffer_output[j] = mwdlp10net->mu_law_10_table[last_coarse_0_pt[j] * SQRT_QUANTIZE + last_fine_0_pt[j]]*N_MBANDS;
+                    //pcm_band[j*N_SAMPLE_BANDS+i] = mwdlp10net->mu_law_10_table[last_coarse_0_pt[j] * SQRT_QUANTIZE + last_fine_0_pt[j]]*32768;
                 }
                 //update state of last_coarse and last_fine integer output
                 //last_output: [[o_1,...,o_N]_1,...,[o_1,...,o_N]_K]; K: DLPC_ORDER
@@ -646,7 +698,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                 for (j=0;j<N_MBANDS;j++,m++) {
                     tmp_out = 0;
                     //pqmf_synth
-                    sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1, &mwdlp10net->pqmf_state[j*N_MBANDS]);
+                    sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, &mwdlp10net->pqmf_state[j*N_MBANDS]);
                     //clamp
                     if (tmp_out < -1) tmp_out = -1;
                     else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
@@ -657,7 +709,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
                     if (tmp_out < -1) tmp_out = -1;
                     else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
                     //16bit pcm signed
-                    output[m] = round(tmp_out * 32768);
+                    output[m] = (short)round(tmp_out * 32768);
                 }
                 *n_output += N_MBANDS;
             }    
@@ -668,7 +720,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
         for  (i=0;i<PQMF_DELAY;i++,m++) {
             tmp_out = 0;
             //pqmf_synth
-            sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, 1, &mwdlp10net->last_pqmf_state[i*N_MBANDS]);
+            sgemv_accum(&tmp_out, pqmf_synth_filter, 1, TAPS_MBANDS, &mwdlp10net->last_pqmf_state[i*N_MBANDS]);
             //clamp
             if (tmp_out < -1) tmp_out = -1;
             else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
@@ -679,7 +731,7 @@ MWDLP10NET_EXPORT void mwdlp10net_synthesize_nodlpc(MWDLP10NetState *mwdlp10net,
             if (tmp_out < -1) tmp_out = -1;
             else if (tmp_out > 0.999969482421875) tmp_out = 0.999969482421875;
             //16bit pcm signed
-            output[m] = round(tmp_out * 32768);
+            output[m] = (short)round(tmp_out * 32768);
         }
         *n_output += PQMF_DELAY;
     }

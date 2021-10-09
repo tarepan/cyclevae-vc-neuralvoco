@@ -268,6 +268,8 @@ def main():
                         type=int, help="kernel size of dilated causal convolution")
     parser.add_argument("--right_size", default=0,
                         type=int, help="kernel size of dilated causal convolution")
+    parser.add_argument("--s_dim", default=256,
+                        type=int, help="kernel size of dilated causal convolution")
     parser.add_argument("--mid_dim", default=32,
                         type=int, help="kernel size of dilated causal convolution")
     # network training setting
@@ -447,6 +449,7 @@ def main():
         right_size=args.right_size,
         n_bands=args.n_bands,
         pad_first=True,
+        s_dim=args.s_dim,
         mid_dim=args.mid_dim,
         scale_in_flag=scale_in_flag,
         red_dim=red_dim,
@@ -513,7 +516,8 @@ def main():
         module_list += list(model_waveform.gru.parameters())
         module_list += list(model_waveform.gru_2.parameters()) + list(model_waveform.out.parameters())
         module_list += list(model_waveform.gru_f.parameters()) + list(model_waveform.out_f.parameters())
-        module_list += list(model_waveform.logits_c.parameters()) + list(model_waveform.logits_f.parameters())
+        if args.lpc > 0:
+            module_list += list(model_waveform.logits_c.parameters()) + list(model_waveform.logits_f.parameters())
         #module_list += list(model_waveform.logits_sgns_c.parameters()) + list(model_waveform.logits_mags_c.parameters())
         #module_list += list(model_waveform.logits_sgns_f.parameters()) + list(model_waveform.logits_mags_f.parameters())
 
@@ -568,12 +572,17 @@ def main():
         logging.error("--feats should be directory or list.")
         sys.exit(1)
     assert len(wav_list) == len(feat_list)
+    n_train_data = len(wav_list)
     batch_size_utt = 8
-    logging.info("number of training_data -- batch_size = %d -- %d" % (len(feat_list), batch_size_utt))
+    logging.info("number of training_data -- batch_size = %d -- %d" % (n_train_data, batch_size_utt))
     dataset = FeatureDatasetNeuVoco(wav_list, feat_list, pad_wav_transform, pad_feat_transform, args.upsampling_factor, 
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, string_path_ft=args.string_path_ft, wlat_flag=args.wlat_flag)
     dataloader = DataLoader(dataset, batch_size=batch_size_utt, shuffle=True, num_workers=args.n_workers)
+    n_iter_batch = n_train_data // batch_size_utt
+    if n_train_data % batch_size_utt > 0:
+        n_iter_batch += 1
+    logging.info(f'n_iter_batch {n_iter_batch}')
     #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=1, n_bands=args.n_bands, wlat_flag=args.wlat_flag)
     #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=20, n_bands=args.n_bands, wlat_flag=args.wlat_flag)
     generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands, wlat_flag=args.wlat_flag)
@@ -1034,16 +1043,15 @@ def main():
             if (not sparse_min_flag) and (iter_idx + 1 >= t_ends[idx_stage]):
                 sparse_check_flag = True
             if (not sparse_min_flag and sparse_check_flag) \
-                or ((round(float(round(Decimal(str(eval_loss_err_avg)),2))-0.12,2) <= float(round(Decimal(str(min_eval_loss_err_avg)),2))) and \
-                    (round(float(round(Decimal(str(eval_loss_ce_avg+eval_loss_ce_avg_std)),2))-0.01,2) <= float(round(Decimal(str(min_eval_loss_ce_avg+min_eval_loss_ce_avg_std)),2)) \
-                        or round(float(round(Decimal(str(eval_loss_ce_avg)),2))-0.01,2) <= float(round(Decimal(str(min_eval_loss_ce_avg)),2)))):
-                round_eval_loss_err_avg = float(round(Decimal(str(eval_loss_err_avg)),2))
-                round_min_eval_loss_err_avg = float(round(Decimal(str(min_eval_loss_err_avg)),2))
-                if (round_eval_loss_err_avg <= round_min_eval_loss_err_avg) or (not err_flag and round_eval_loss_err_avg > round_min_eval_loss_err_avg) or (not sparse_min_flag and sparse_check_flag):
+                or (float(round(Decimal(str(eval_loss_err_avg-min_eval_loss_err_avg)),2)) <= 0.12 and \
+                    (float(round(Decimal(str(eval_loss_ce_avg+eval_loss_ce_avg_std-(min_eval_loss_ce_avg+min_eval_loss_ce_avg_std))),2)) <= 0.01 or \
+                        float(round(Decimal(str(eval_loss_ce_avg-min_eval_loss_ce_avg)),2)) <= 0.01)):
+                round_eval_loss_min_eval_err_avg = float(round(Decimal(str(eval_loss_err_avg-min_eval_loss_err_avg)),2))
+                if (round_eval_loss_min_eval_err_avg <= 0) or not err_flag or (not sparse_min_flag and sparse_check_flag):
                     if sparse_min_flag:
-                        if round_eval_loss_err_avg > round_min_eval_loss_err_avg:
+                        if round_eval_loss_min_eval_err_avg > 0:
                             err_flag = True
-                        elif round_eval_loss_err_avg <= round_min_eval_loss_err_avg:
+                        elif round_eval_loss_min_eval_err_avg <= 0:
                             err_flag = False
                     elif sparse_check_flag:
                         sparse_min_flag = True

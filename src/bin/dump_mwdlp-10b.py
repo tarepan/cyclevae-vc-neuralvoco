@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-'''Copyright (c) 2017-2018 Mozilla
-
+'''Copyright (c) 2017-2018 Mozilla 
    Redistribution and use in source and binary forms, with or without
    modification, are permitted provided that the following conditions
    are met:
@@ -29,7 +28,7 @@
     Modified for 16-bit output multiband wavernn with data-driven LPC
     by: Patrick Lumban Tobing (Nagoya University) on October 2020
     Further modified for 10-bit mu-law output multiband wavernn with data-driven LPC.
-    by: Patrick Lumban Tobing (Nagoya University) on December 2020 - March 2021
+    by: Patrick Lumban Tobing (Nagoya University) on December 2020 - September 2021
 '''
 
 import argparse
@@ -163,8 +162,10 @@ def main():
         right_size=config.right_size,
         n_bands=config.n_bands,
         pad_first=True,
+        s_dim=config.s_dim,
         mid_dim=config.mid_dim,
         emb_flag=True,
+        seg_conv_flag=config.seg_conv_flag_wave,
         lpc=config.lpc)
     print(model)
     device = torch.device("cpu")
@@ -335,6 +336,8 @@ def main():
     f.write('const Conv1DLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, {}, ACTIVATION_LINEAR\n}};\n\n'
             .format(name, name, name, weights.shape[1], weights.shape[0], weights.shape[2]))
     hf.write('#define {}_OUT_SIZE {}\n'.format(name.upper(), weights.shape[2]))
+    hf.write('#define {}_INPUT_SIZE ({}*{})\n'.format(name.upper(), weights.shape[1],
+        model.pad_left+1+model.pad_right))
     hf.write('#define {}_STATE_SIZE ({}*{})\n'.format(name.upper(), weights.shape[1],
         model.pad_left+1+model.pad_right-1))
     hf.write('#define {}_DELAY {}\n'.format(name.upper(), model.pad_right))
@@ -360,6 +363,7 @@ def main():
     printSparseVector(f, weights, name + '_recurrent_weights')
     printVector(f, bias, name + '_bias')
     activation = 'TANH'
+    #activation = 'TANH_EXP'
     reset_after = 1
     neurons = weights.shape[1]//3
     max_rnn_neurons = max(max_rnn_neurons, neurons)
@@ -380,6 +384,7 @@ def main():
     printVector(f, weights_hh, name + '_recurrent_weights')
     printVector(f, bias, name + '_bias')
     activation = 'TANH'
+    #activation = 'TANH_EXP'
     reset_after = 1
     neurons = weights_hh.shape[1]//3
     max_rnn_neurons = max(max_rnn_neurons, neurons)
@@ -400,6 +405,7 @@ def main():
     printVector(f, weights_hh, name + '_recurrent_weights')
     printVector(f, bias, name + '_bias')
     activation = 'TANH'
+    #activation = 'TANH_EXP'
     reset_after = 1
     neurons = weights_hh.shape[1]//3
     max_rnn_neurons = max(max_rnn_neurons, neurons)

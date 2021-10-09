@@ -48,8 +48,6 @@ from utils import read_hdf5
 from utils import read_txt
 from vcneuvoco import GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF, encode_mu_law
 from vcneuvoco import decode_mu_law_torch, MultiResolutionSTFTLoss
-#from vcneuvoco_ import GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF, encode_mu_law
-#from vcneuvoco_ import decode_mu_law_torch, MultiResolutionSTFTLoss
 #from radam import RAdam
 import torch_optimizer as optim
 
@@ -207,7 +205,7 @@ def data_generator(dataloader, device, batch_size, upsampling_factor, limit_coun
 
 def save_checkpoint(checkpoint_dir, model_waveform, optimizer,
     min_eval_loss_ce_avg, min_eval_loss_ce_avg_std, min_eval_loss_err_avg, min_eval_loss_err_avg_std,
-        min_eval_loss_l1_avg, min_eval_loss_l1_fb, err_flag,
+        min_eval_loss_l1_avg, min_eval_loss_l1_fb, err_flag, converge_checkpoint_flag,
         iter_idx, min_idx, numpy_random_state, torch_random_state, iterations):
     """FUNCTION TO SAVE CHECKPOINT
 
@@ -228,6 +226,7 @@ def save_checkpoint(checkpoint_dir, model_waveform, optimizer,
         "min_eval_loss_l1_avg": min_eval_loss_l1_avg,
         "min_eval_loss_l1_fb": min_eval_loss_l1_fb,
         "err_flag": err_flag,
+        "converge_checkpoint_flag": converge_checkpoint_flag,
         "iter_idx": iter_idx,
         "last_epoch": iterations,
         "min_idx": min_idx,
@@ -343,8 +342,12 @@ def main():
                         type=int, help="kernel size of dilated causal convolution")
     parser.add_argument("--right_size", default=0,
                         type=int, help="kernel size of dilated causal convolution")
-    parser.add_argument("--mid_dim", default=32,
+    parser.add_argument("--s_dim", default=320,
                         type=int, help="kernel size of dilated causal convolution")
+    parser.add_argument("--mid_dim", default=16,
+                        type=int, help="kernel size of dilated causal convolution")
+    parser.add_argument("--seg_conv_flag_wave", default=True,
+                        type=strtobool, help="flag to use excit (U/V and F0) if using mel-spec")
     # network training setting
     parser.add_argument("--lr", default=1e-4,
                         type=float, help="learning rate")
@@ -483,6 +486,7 @@ def main():
     args.half_n_quantize = args.n_quantize // 2
     args.c_pad = args.half_n_quantize // args.cf_dim
     args.f_pad = args.half_n_quantize % args.cf_dim
+    args.step_fact = 3.3644859813084112149532710280374
     torch.save(args, args.expdir + "/model.conf")
 
     # define network
@@ -500,7 +504,9 @@ def main():
         n_bands=args.n_bands,
         pad_first=True,
         mid_dim=args.mid_dim,
+        s_dim=args.s_dim,
         emb_flag=True,
+        seg_conv_flag=args.seg_conv_flag_wave,
         do_prob=args.do_prob)
     logging.info(model_waveform)
     pqmf = PQMF(args.n_bands)
@@ -603,7 +609,8 @@ def main():
     module_list += list(model_waveform.gru.parameters())
     module_list += list(model_waveform.gru_2.parameters()) + list(model_waveform.out.parameters())
     module_list += list(model_waveform.gru_f.parameters()) + list(model_waveform.out_f.parameters())
-    module_list += list(model_waveform.logits_c.parameters()) + list(model_waveform.logits_f.parameters())
+    if args.lpc > 0:
+        module_list += list(model_waveform.logits_c.parameters()) + list(model_waveform.logits_f.parameters())
     #module_list += list(model_waveform.logits_sgns_c.parameters()) + list(model_waveform.logits_mags_c.parameters())
     #module_list += list(model_waveform.logits_sgns_f.parameters()) + list(model_waveform.logits_mags_f.parameters())
     optimizer = optim.RAdam(
@@ -658,14 +665,22 @@ def main():
         logging.error("--feats should be directory or list.")
         sys.exit(1)
     assert len(wav_list) == len(feat_list)
+    n_train_data = len(wav_list)
     batch_size_utt = 8
-    logging.info("number of training_data -- batch_size = %d -- %d" % (len(feat_list), batch_size_utt))
-    dataset = FeatureDatasetNeuVoco(wav_list, feat_list, pad_wav_transform, pad_feat_transform, args.upsampling_factor,
+    logging.info("number of training_data -- batch_size = %d -- %d" % (n_train_data, batch_size_utt))
+    dataset = FeatureDatasetNeuVoco(wav_list, feat_list, pad_wav_transform, pad_feat_transform, args.upsampling_factor, 
                     args.string_path, wav_transform=wav_transform, n_bands=args.n_bands, with_excit=with_excit, cf_dim=args.cf_dim, spcidx=True,
                         pad_left=model_waveform.pad_left, pad_right=model_waveform.pad_right, worgx_band_flag=True, worgx_flag=True, pad_wav_org_transform=pad_wav_org_transform)
     # Dataset flags: worgx_band_flag=True, worgx_flag=True, wrec_flag=defaultTrue, with_excit=False
     dataloader = DataLoader(dataset, batch_size=batch_size_utt, shuffle=True, num_workers=args.n_workers)
     # Infinite generator
+    n_iter_batch = n_train_data // batch_size_utt
+    if n_train_data % batch_size_utt > 0:
+        n_iter_batch += 1
+    logging.info(f'n_iter_batch {n_iter_batch}')
+    #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=1, n_bands=args.n_bands)
+    #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=5, n_bands=args.n_bands)
+    #generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=20, n_bands=args.n_bands)
     generator = data_generator(dataloader, device, args.batch_size, args.upsampling_factor, limit_count=None, n_bands=args.n_bands)
 
     # define generator evaluation
@@ -827,6 +842,7 @@ def main():
     sparse_check_flag = False
     
     # resume
+    converge_checkpoint_flag = False
     if args.resume is not None:
         np.random.set_state(checkpoint["numpy_random_state"])
         torch.set_rng_state(checkpoint["torch_random_state"])
@@ -837,6 +853,7 @@ def main():
         min_eval_loss_l1_avg = checkpoint["min_eval_loss_l1_avg"]
         min_eval_loss_l1_fb = checkpoint["min_eval_loss_l1_fb"]
         err_flag = checkpoint["err_flag"]
+        converge_checkpoint_flag = checkpoint["converge_checkpoint_flag"]
         iter_idx = checkpoint["iter_idx"]
         min_idx = checkpoint["min_idx"]
     # /resume
@@ -854,6 +871,8 @@ def main():
     logging.info(f"eps: {eps}\neps_1: {eps_1}")
 
     ##### Training Loop #####
+    converge_checkpoint_step = args.t_end * args.step_fact
+    logging.info(converge_checkpoint_step)
     logging.info("==%d EPOCH==" % (epoch_idx+1))
     logging.info("Training data")
     while True:
@@ -1037,10 +1056,10 @@ def main():
                     logits_gumbel = F.softmax(batch_x_f_output - torch.log(-torch.log(torch.clamp(u.uniform_(), eps, eps_1))), dim=-1)
                     logits_gumbel_norm_1hot = F.threshold(logits_gumbel / torch.max(logits_gumbel,-1,keepdim=True)[0], eps_1, 0)
                     sample_indices_f = torch.sum(logits_gumbel_norm_1hot*indices_1hot,-1)
-                    batch_x_output = decode_mu_law_torch(sample_indices_c*args.cf_dim+sample_indices_f)
-                    batch_x = decode_mu_law_torch(batch_x_c*args.cf_dim+batch_x_f)
+                    batch_x_output = decode_mu_law_torch(sample_indices_c*args.cf_dim+sample_indices_f).transpose(1,2)
+                    batch_x = decode_mu_law_torch(batch_x_c*args.cf_dim+batch_x_f).transpose(1,2)
                     # batch_x_output_*f*ull*b*and: subbands => fullband
-                    batch_x_output_fb = pqmf.synthesis(batch_x_output.transpose(1,2))[:,0]
+                    batch_x_output_fb = pqmf.synthesis(batch_x_output)[:,0]
 
                     # samples check
                     #i = np.random.randint(0, batch_x_c_output.shape[0])
@@ -1077,15 +1096,15 @@ def main():
                             batch_x_f_output_ = batch_x_f_output[k,:slens_utt]
                             batch_x_c_ = batch_x_c[k,:slens_utt]
                             batch_x_f_ = batch_x_f[k,:slens_utt]
-                            # T x n_bands x 256 --> (T x n_bands) x 256 --> T x n_bands
-                            batch_loss_ce_select += torch.mean(criterion_ce(batch_x_c_output_.reshape(-1, args.cf_dim), batch_x_c_.reshape(-1)).reshape(batch_x_c_output_.shape[0], -1), 0) # n_bands
-                            batch_loss_ce_f_select += torch.mean(criterion_ce(batch_x_f_output_.reshape(-1, args.cf_dim), batch_x_f_.reshape(-1)).reshape(batch_x_f_output_.shape[0], -1), 0) # n_bands
+                            # T x n_bands x 32 --> (T x n_bands) x 32 --> T x n_bands
+                            batch_loss_ce_select += torch.mean(criterion_ce(batch_x_c_output_.reshape(-1, args.cf_dim), batch_x_c_.reshape(-1)).reshape(-1, args.n_bands), 0) # n_bands
+                            batch_loss_ce_f_select += torch.mean(criterion_ce(batch_x_f_output_.reshape(-1, args.cf_dim), batch_x_f_.reshape(-1)).reshape(-1, args.n_bands), 0) # n_bands
                             batch_loss_err_select += torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_c_output_, dim=-1), F.one_hot(batch_x_c_, num_classes=args.cf_dim).float()), -1), 0) # n_bands
                             batch_loss_err_f_select += torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_f_output_, dim=-1), F.one_hot(batch_x_f_, num_classes=args.cf_dim).float()), -1), 0) # n_bands
                             batch_loss_fro_fb_select_, batch_loss_l1_fb_select_ = criterion_stft_fb(batch_x_output_fb[k,:slens_utt_fb], batch_x_fb[k,:slens_utt_fb])
                             batch_loss_fro_fb_select += batch_loss_fro_fb_select_
                             batch_loss_l1_fb_select += batch_loss_l1_fb_select_
-                            batch_loss_fro_select_, batch_loss_l1_select_ = criterion_stft(batch_x_output[k,:slens_utt].transpose(1,0), batch_x[k,:slens_utt].transpose(1,0))
+                            batch_loss_fro_select_, batch_loss_l1_select_ = criterion_stft(batch_x_output[k,:,:slens_utt], batch_x[k,:,:slens_utt])
                             batch_loss_fro_select += batch_loss_fro_select_
                             batch_loss_l1_select += batch_loss_l1_select_
                         batch_loss_ce_select /= len(idx_select)
@@ -1147,6 +1166,7 @@ def main():
                             batch_x_f_output = torch.index_select(batch_x_f_output,0,idx_select_full)
                             batch_x_output = torch.index_select(batch_x_output,0,idx_select_full)
                             batch_x_output_fb = torch.index_select(batch_x_output_fb,0,idx_select_full)
+                            n_batch_utt = len(idx_select_full)
                         else:
                             logging.info("batch loss select (%.3f sec)" % (time.time() - start))
                             iter_count += 1
@@ -1154,9 +1174,9 @@ def main():
                             continue
 
                     # loss
-                    batch_loss_ce_ = torch.mean(torch.mean(criterion_ce(batch_x_c_output.reshape(-1, args.cf_dim), batch_x_c.reshape(-1)).reshape(batch_x_c_output.shape[0], batch_x_c_output.shape[1], -1), 1), 0) # n_bands
+                    batch_loss_ce_ = torch.mean(torch.mean(criterion_ce(batch_x_c_output.reshape(-1, args.cf_dim), batch_x_c.reshape(-1)).reshape(n_batch_utt, -1, args.n_bands), 1), 0) # n_bands
                     batch_loss_err_ = torch.mean(torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_c_output, dim=-1), F.one_hot(batch_x_c, num_classes=args.cf_dim).float()), -1), 1), 0) # n_bands
-                    batch_loss_ce_f_ = torch.mean(torch.mean(criterion_ce(batch_x_f_output.reshape(-1, args.cf_dim), batch_x_f.reshape(-1)).reshape(batch_x_f_output.shape[0], batch_x_f_output.shape[1], -1), 1), 0) # n_bands
+                    batch_loss_ce_f_ = torch.mean(torch.mean(criterion_ce(batch_x_f_output.reshape(-1, args.cf_dim), batch_x_f.reshape(-1)).reshape(n_batch_utt, -1, args.n_bands), 1), 0) # n_bands
                     batch_loss_err_f_ = torch.mean(torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_f_output, dim=-1), F.one_hot(batch_x_f, num_classes=args.cf_dim).float()), -1), 1), 0) # n_bands
                     batch_loss_ce_c_avg = batch_loss_ce_.mean().item()
                     batch_loss_err_c_avg = batch_loss_err_.mean().item()
@@ -1176,7 +1196,7 @@ def main():
                     loss_err_c_avg.append(batch_loss_err_c_avg)
                     loss_ce_f_avg.append(batch_loss_ce_f_avg)
                     loss_err_f_avg.append(batch_loss_err_f_avg)
-                    batch_loss_fro_, batch_loss_l1_ = criterion_stft(batch_x_output.transpose(1,2), batch_x.transpose(1,2))
+                    batch_loss_fro_, batch_loss_l1_ = criterion_stft(batch_x_output, batch_x)
                     for i in range(args.n_bands):
                         batch_loss_ce[i] = batch_loss_ce_[i].item()
                         batch_loss_err[i] = batch_loss_err_[i].item()
@@ -1281,21 +1301,26 @@ def main():
             if (not sparse_min_flag) and (iter_idx + 1 >= t_ends[idx_stage]):
                 sparse_check_flag = True
             if (not sparse_min_flag and sparse_check_flag) \
-                or ((round(float(round(Decimal(str(eval_loss_err_avg)),2))-0.28,2) <= float(round(Decimal(str(min_eval_loss_err_avg)),2))) and \
-                    (round(float(round(Decimal(str(eval_loss_l1_avg)),2))-0.06,2) <= float(round(Decimal(str(min_eval_loss_l1_avg)),2))) and \
-                    (round(float(round(Decimal(str(eval_loss_l1_fb)),2))-0.09,2) <= float(round(Decimal(str(min_eval_loss_l1_fb)),2))) and \
-                    (round(float(round(Decimal(str(eval_loss_ce_avg+eval_loss_ce_avg_std)),2))-0.01,2) <= float(round(Decimal(str(min_eval_loss_ce_avg+min_eval_loss_ce_avg_std)),2)) \
-                        or round(float(round(Decimal(str(eval_loss_ce_avg)),2))-0.01,2) <= float(round(Decimal(str(min_eval_loss_ce_avg)),2)))):
-                round_eval_loss_err_avg = float(round(Decimal(str(eval_loss_err_avg)),2))
-                round_min_eval_loss_err_avg = float(round(Decimal(str(min_eval_loss_err_avg)),2))
-                if (round_eval_loss_err_avg <= round_min_eval_loss_err_avg) or (not err_flag and round_eval_loss_err_avg > round_min_eval_loss_err_avg) or (not sparse_min_flag and sparse_check_flag):
+                or (not converge_checkpoint_flag and iter_idx + 1 >= converge_checkpoint_flag) \
+                or (float(round(Decimal(str(eval_loss_err_avg-min_eval_loss_err_avg)),2)) <= 0.28 and \
+                    float(round(Decimal(str(eval_loss_l1_avg-min_eval_loss_l1_avg)),2)) <= 0.06 and \
+                    float(round(Decimal(str(eval_loss_l1_fb-min_eval_loss_l1_fb)),2)) <= 0.09 and \
+                    (float(round(Decimal(str(eval_loss_ce_avg+eval_loss_ce_avg_std-(min_eval_loss_ce_avg+min_eval_loss_ce_avg_std))),2)) <= 0.01 or \
+                        float(round(Decimal(str(eval_loss_ce_avg-min_eval_loss_ce_avg)),2)) <= 0.01)):
+                round_eval_loss_min_eval_err_avg = float(round(Decimal(str(eval_loss_err_avg-min_eval_loss_err_avg)),2))
+                if (round_eval_loss_min_eval_err_avg <= 0) or not err_flag or (not sparse_min_flag and sparse_check_flag) \
+                    or (not converge_checkpoint_flag and iter_idx + 1 >= converge_checkpoint_step):
                     if sparse_min_flag:
-                        if round_eval_loss_err_avg > round_min_eval_loss_err_avg:
+                        if round_eval_loss_min_eval_err_avg > 0:
                             err_flag = True
-                        elif round_eval_loss_err_avg <= round_min_eval_loss_err_avg:
+                        elif round_eval_loss_min_eval_err_avg <= 0:
                             err_flag = False
                     elif sparse_check_flag:
                         sparse_min_flag = True
+                        err_flag = False
+                    if not converge_checkpoint_flag and iter_idx + 1 >= converge_checkpoint_step:
+                        logging.info(f"converge_checkpoint_flag {iter_idx + 1} {converge_checkpoint_step}")
+                        converge_checkpoint_flag = True
                         err_flag = False
                     min_eval_loss_ce_avg = eval_loss_ce_avg
                     min_eval_loss_ce_avg_std = eval_loss_ce_avg_std
@@ -1359,7 +1384,7 @@ def main():
             logging.info('save epoch:%d' % (epoch_idx+1))
             save_checkpoint(args.expdir, model_waveform, optimizer,
                 min_eval_loss_ce_avg, min_eval_loss_ce_avg_std, min_eval_loss_err_avg, min_eval_loss_err_avg_std,
-                    min_eval_loss_l1_avg, min_eval_loss_l1_fb, err_flag,
+                    min_eval_loss_l1_avg, min_eval_loss_l1_fb, err_flag, converge_checkpoint_flag,
                     iter_idx, min_idx, numpy_random_state, torch_random_state, epoch_idx + 1)
             
             # ========================================================================================================================
@@ -1439,7 +1464,7 @@ def main():
                         batch_x_f_lpc = F.pad(batch_x_f[:,:x_es-1], (0, 0, -(x_ss-args.lpc), 0), "constant", args.f_pad)
                 batch_x_c = batch_x_c[:,x_ss:x_es]
                 batch_x_f = batch_x_f[:,x_ss:x_es]
-                batch_x = batch_x[:,x_ss:x_es]
+                batch_x = batch_x[:,x_ss:x_es].transpose(1,2)
                 batch_x_fb = batch_x_fb[:,x_ss*args.n_bands:x_es*args.n_bands]
             else:
                 batch_x_c_prev = batch_x_c[:,x_ss-1:-1]
@@ -1453,7 +1478,7 @@ def main():
                         batch_x_f_lpc = F.pad(batch_x_f[:,:-1], (0, 0, -(x_ss-args.lpc), 0), "constant", args.f_pad)
                 batch_x_c = batch_x_c[:,x_ss:]
                 batch_x_f = batch_x_f[:,x_ss:]
-                batch_x = batch_x[:,x_ss:]
+                batch_x = batch_x[:,x_ss:].transpose(1,2)
                 batch_x_fb = batch_x_fb[:,x_ss*args.n_bands:]
         else:
             batch_x_c_prev = F.pad(batch_x_c[:,:x_es-1], (0, 0, 1, 0), "constant", args.c_pad)
@@ -1463,7 +1488,7 @@ def main():
                 batch_x_f_lpc = F.pad(batch_x_f[:,:x_es-1], (0, 0, args.lpc, 0), "constant", args.f_pad)
             batch_x_c = batch_x_c[:,:x_es]
             batch_x_f = batch_x_f[:,:x_es]
-            batch_x = batch_x[:,:x_es]
+            batch_x = batch_x[:,:x_es].transpose(1,2)
             batch_x_fb = batch_x_fb[:,:x_es*args.n_bands]
         if f_ss_pad_left >= 0 and f_es_pad_right <= max_flen: # pad left and right available
             batch_feat = batch_feat[:,f_ss_pad_left:f_es_pad_right]
@@ -1500,8 +1525,8 @@ def main():
         logits_gumbel = F.softmax(batch_x_f_output - torch.log(-torch.log(torch.clamp(u.uniform_(), eps, eps_1))), dim=-1)
         logits_gumbel_norm_1hot = F.threshold(logits_gumbel / torch.max(logits_gumbel,-1,keepdim=True)[0], eps_1, 0)
         sample_indices_f = torch.sum(logits_gumbel_norm_1hot*indices_1hot,-1)
-        batch_x_output = decode_mu_law_torch(sample_indices_c*args.cf_dim+sample_indices_f)
-        batch_x_output_fb = pqmf.synthesis(batch_x_output.transpose(1,2))[:,0]
+        batch_x_output = decode_mu_law_torch(sample_indices_c*args.cf_dim+sample_indices_f).transpose(1,2)
+        batch_x_output_fb = pqmf.synthesis(batch_x_output)[:,0]
         # /Forward?
 
         # samples check
@@ -1538,9 +1563,9 @@ def main():
                 batch_x_f_output_ = batch_x_f_output[k,:slens_utt]
                 batch_x_c_ = batch_x_c[k,:slens_utt]
                 batch_x_f_ = batch_x_f[k,:slens_utt]
-                # T x n_bands x 256 --> (T x n_bands) x 256 --> T x n_bands
-                batch_loss_ce_select_ = torch.mean(criterion_ce(batch_x_c_output_.reshape(-1, args.cf_dim), batch_x_c_.reshape(-1)).reshape(batch_x_c_output_.shape[0], -1), 0) # n_bands
-                batch_loss_ce_f_select_ = torch.mean(criterion_ce(batch_x_f_output_.reshape(-1, args.cf_dim), batch_x_f_.reshape(-1)).reshape(batch_x_f_output_.shape[0], -1), 0) # n_bands
+                # T x n_bands x 32 --> (T x n_bands) x 32 --> T x n_bands
+                batch_loss_ce_select_ = torch.mean(criterion_ce(batch_x_c_output_.reshape(-1, args.cf_dim), batch_x_c_.reshape(-1)).reshape(-1, args.n_bands), 0) # n_bands
+                batch_loss_ce_f_select_ = torch.mean(criterion_ce(batch_x_f_output_.reshape(-1, args.cf_dim), batch_x_f_.reshape(-1)).reshape(-1, args.n_bands), 0) # n_bands
                 batch_loss_ce_select += batch_loss_ce_select_
                 batch_loss_ce_f_select += batch_loss_ce_f_select_
                 batch_loss_err_select_ = torch.mean(torch.sum(criterion_l1(F.softmax(batch_x_c_output_, dim=-1), F.one_hot(batch_x_c_, num_classes=args.cf_dim).float()), -1), 0) # n_bands
@@ -1548,7 +1573,7 @@ def main():
                 batch_loss_fro_fb_select_, batch_loss_l1_fb_select_ = criterion_stft_fb(batch_x_output_fb[k,:slens_utt_fb], batch_x_fb[k,:slens_utt_fb])
                 batch_loss_fro_fb_select += batch_loss_fro_fb_select_
                 batch_loss_l1_fb_select += batch_loss_l1_fb_select_
-                batch_loss_fro_select_, batch_loss_l1_select_ = criterion_stft(batch_x_output[k,:slens_utt].transpose(1,0), batch_x[k,:slens_utt].transpose(1,0))
+                batch_loss_fro_select_, batch_loss_l1_select_ = criterion_stft(batch_x_output[k,:,:slens_utt], batch_x[k,:,:slens_utt])
                 batch_loss += batch_loss_ce_select_.sum() + batch_loss_ce_f_select_.sum() \
                                 + batch_loss_ce_select_.mean() + batch_loss_ce_f_select_.mean() \
                                 + ((batch_loss_err_select_.sum() + batch_loss_err_f_select_.sum())/factors) \
@@ -1619,6 +1644,7 @@ def main():
                 batch_x_f_output = torch.index_select(batch_x_f_output,0,idx_select_full)
                 batch_x_output = torch.index_select(batch_x_output,0,idx_select_full)
                 batch_x_output_fb = torch.index_select(batch_x_output_fb,0,idx_select_full)
+                n_batch_utt = len(idx_select_full)
             elif batch_loss > 0:
                 optimizer.zero_grad()
                 batch_loss.backward()
@@ -1663,27 +1689,16 @@ def main():
                 continue
 
         # loss
-        batch_loss_ce_ = torch.mean(criterion_ce(batch_x_c_output.reshape(-1, args.cf_dim), batch_x_c.reshape(-1)).reshape(batch_x_c_output.shape[0], batch_x_c_output.shape[1], -1), 1) # B x n_bands
-        #batch_loss_err_ = torch.mean(torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_c_output, dim=-1), F.one_hot(batch_x_c, num_classes=args.cf_dim).float()), -1), 1), 0) # n_bands
+        batch_loss_ce_ = torch.mean(criterion_ce(batch_x_c_output.reshape(-1, args.cf_dim), batch_x_c.reshape(-1)).reshape(n_batch_utt, -1, args.n_bands), 1) # B x n_bands
         batch_loss_err_ = torch.mean(torch.sum(criterion_l1(F.softmax(batch_x_c_output, dim=-1), F.one_hot(batch_x_c, num_classes=args.cf_dim).float()), -1), 1) # B x n_bands
-        #batch_loss_err__ = torch.mean(torch.mean(criterion_l1(F.softmax(batch_x_c_output, dim=-1), F.one_hot(batch_x_c, num_classes=args.cf_dim).float()), -1), 1) # B x n_bands
-        #batch_loss_err_ = torch.mean(torch.mean(criterion_l1(F.softmax(batch_x_c_output, dim=-1), F.one_hot(batch_x_c, num_classes=args.cf_dim).float()), -1), 1) # B x n_bands
-        batch_loss_ce_f_ = torch.mean(criterion_ce(batch_x_f_output.reshape(-1, args.cf_dim), batch_x_f.reshape(-1)).reshape(batch_x_f_output.shape[0], batch_x_f_output.shape[1], -1), 1) # B x n_bands
-        #batch_loss_err_f_ = torch.mean(torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_f_output, dim=-1), F.one_hot(batch_x_f, num_classes=args.cf_dim).float()), -1), 1), 0) # n_bands
+        batch_loss_ce_f_ = torch.mean(criterion_ce(batch_x_f_output.reshape(-1, args.cf_dim), batch_x_f.reshape(-1)).reshape(n_batch_utt, -1, args.n_bands), 1) # B x n_bands
         batch_loss_err_f_ = torch.mean(torch.sum(criterion_l1(F.softmax(batch_x_f_output, dim=-1), F.one_hot(batch_x_f, num_classes=args.cf_dim).float()), -1), 1) # B x n_bands
-        #batch_loss_err_f__ = torch.mean(torch.mean(criterion_l1(F.softmax(batch_x_f_output, dim=-1), F.one_hot(batch_x_f, num_classes=args.cf_dim).float()), -1), 1) # B x n_bands
-        #batch_loss_err_f_ = torch.mean(torch.mean(criterion_l1(F.softmax(batch_x_f_output, dim=-1), F.one_hot(batch_x_f, num_classes=args.cf_dim).float()), -1), 1) # B x n_bands
         #logging.info(f'{batch_loss_err_.mean()}')
         #logging.info(f'{batch_loss_err_f_.mean()}')
         #logging.info(f'{batch_loss_err__.mean()}')
         #logging.info(f'{batch_loss_err_f__.mean()}')
-        #batch_loss += batch_loss_err_.sum() + batch_loss_err_f_.sum() \
         batch_loss += ((batch_loss_err_.sum() + batch_loss_err_f_.sum())/factors) \
-                        + batch_loss_err_.mean(-1).sum() + batch_loss_err_f_.mean(-1).sum() #360/405[clamp]
-        #batch_loss += batch_loss_err_.mean(-1).sum() + batch_loss_err_f_.mean(-1).sum() #360/405[clamp]
-        #batch_loss += batch_loss_err_.sum() + batch_loss_err_f_.sum() #360/405[clamp]
-        #batch_loss_err_ = torch.mean(torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_c_output, dim=-1), F.one_hot(batch_x_c, num_classes=args.cf_dim).float()), -1), 1), 0) # n_bands
-        #batch_loss_err_f_ = torch.mean(torch.mean(torch.sum(100*criterion_l1(F.softmax(batch_x_f_output, dim=-1), F.one_hot(batch_x_f, num_classes=args.cf_dim).float()), -1), 1), 0) # n_bands
+                        + batch_loss_err_.mean(-1).sum() + batch_loss_err_f_.mean(-1).sum()
         batch_loss_err_ = 100*batch_loss_err_.mean(0) # n_bands
         batch_loss_err_f_ = 100*batch_loss_err_f_.mean(0) # n_bands
 
@@ -1705,7 +1720,7 @@ def main():
         loss_err_c_avg.append(batch_loss_err_c_avg)
         loss_ce_f_avg.append(batch_loss_ce_f_avg)
         loss_err_f_avg.append(batch_loss_err_f_avg)
-        batch_loss_fro_, batch_loss_l1_ = criterion_stft(batch_x_output.transpose(1,2), batch_x.transpose(1,2))
+        batch_loss_fro_, batch_loss_l1_ = criterion_stft(batch_x_output, batch_x)
         for i in range(args.n_bands):
             batch_loss_ce[i] = batch_loss_ce_[:,i].mean().item()
             batch_loss_err[i] = batch_loss_err_[i].item()
