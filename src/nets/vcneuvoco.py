@@ -581,38 +581,6 @@ class EmbeddingOne(nn.Embedding):
         torch.nn.init.constant_(self.weight, 1)
 
 
-class EmbeddingHalf(nn.Embedding):
-    """Conv1d module with customized initialization."""
-
-    def __init__(self, *args, **kwargs):
-        """Initialize Conv1d module."""
-        super(EmbeddingHalf, self).__init__(*args, **kwargs)
-
-    def reset_parameters(self):
-        """Reset parameters."""
-        torch.nn.init.constant_(self.weight, 0.5)
-
-
-def nn_search(encoding, centroids):
-    T = encoding.shape[0]
-    K = centroids.shape[0]
-    dist2 = torch.sum((encoding.unsqueeze(1).repeat(1,K,1)-centroids.unsqueeze(0).repeat(T,1,1)).abs(),2) # TxK
-    ctr_ids = torch.argmin(dist2, dim=-1)
-
-    return ctr_ids
-
-
-def nn_search_batch(encoding, centroids):
-    B = encoding.shape[0]
-    T = encoding.shape[1]
-    K = centroids.shape[0]
-    dist2 = torch.sum((encoding.unsqueeze(2).repeat(1,1,K,1)-\
-                    centroids.unsqueeze(0).unsqueeze(0).repeat(B,T,1,1)).abs(),3) # B x T x K
-    ctr_ids = torch.argmin(dist2, dim=-1) # B x T
-
-    return ctr_ids
-
-
 def cross_entropy_with_logits(logits, probs):
     logsumexp = torch.log(torch.sum(torch.exp(logits), -1, keepdim=True)) # B x T x K --> B x T x 1
 
@@ -623,58 +591,6 @@ def kl_categorical_categorical_logits(p, logits_p, logits_q):
     """ sum_{k=1}^K q_k * (ln q_k - ln p_k) """
 
     return -cross_entropy_with_logits(logits_p, p) + cross_entropy_with_logits(logits_q, p) # B x T x K --> B x T
-
-
-def sampling_laplace_wave(loc, scale):
-    #eps = torch.empty_like(loc).uniform_(torch.finfo(loc.dtype).eps-1,1)
-    small_zero = torch.finfo(loc.dtype).eps
-    eps = torch.empty_like(loc).uniform_(small_zero-1,1-small_zero)
-
-    return loc - scale * eps.sign() * torch.log1p(-eps.abs()) # scale
-
- 
-def sampling_normal(mu, var):
-    eps = torch.randn(mu.shape).cuda()
-
-    return mu + torch.sqrt(var) * eps # var
-
-
-def kl_normal(mu_q, var_q):
-    """ 1/2 [µ_i^2 + σ^2_i − 1 - ln(σ^2_i) ] """
-
-    var_q = torch.clamp(var_q, min=1e-9)
-
-    return torch.mean(torch.sum(0.5*(torch.pow(mu_q, 2) + var_q - 1 - torch.log(var_q)), -1)) # B x T x C --> B x T --> 1
-
-
-def kl_normal_normal(mu_q, var_q, p):
-    """ 1/2*σ^2_j [(µ_i − µ_j)^2 + σ^2_i − σ^2_j] + ln σ_j/σ_i """
-
-    var_q = torch.clamp(var_q, min=1e-9)
-
-    mu_p = p[:mu_q.shape[-1]]
-    var_p = p[mu_q.shape[-1]:]
-    var_p = torch.clamp(var_p, min=1e-9)
-
-    return torch.mean(torch.sum(0.5*(torch.pow(mu_q-mu_p, 2)/var_p + var_q/var_p - 1 + torch.log(var_p/var_q)), -1)) # B x T x C --> B x T --> 1
-
-
-def neg_entropy_laplace(log_b):
-    #-ln(2be) = -((ln(2)+1) + ln(b))
-    return -(1.69314718055994530941723212145818 + log_b)
-
-
-def sum_gauss_dist(param_x, param_y):
-    dim = param_x.shape[-1]
-
-    if len(param_x.shape) > 2:
-        mean_z = param_x[:,:,:dim] + param_y[:,:,:dim]
-        var_z = param_x[:,:,dim:] + param_y[:,:,dim:]
-    else:
-        mean_z = param_x[:,dim:] + param_y[:,dim:]
-        var_z = param_x[:,dim:] + param_y[:,dim:]
-
-    return torch.cat((mean_z, var_z), -1)
 
 
 def kl_laplace(param):
@@ -693,15 +609,6 @@ def kl_laplace(param):
     mu_q_abs = torch.abs(mu_q)
 
     return -torch.log(scale_q) + mu_q_abs + scale_q*torch.exp(-mu_q_abs/scale_q) - 1 # B x T x C / T x C
-
-
-def kl_laplace_param(mu_q, sigma_q):
-    """ - ln(λ_i) + |θ_i| + λ_i * exp(−|θ_i|/λ_i) − 1 """
-
-    scale_q = torch.clamp(sigma_q.exp(), min=1e-12)
-    mu_q_abs = torch.abs(mu_q)
-
-    return torch.mean(torch.sum(-torch.log(scale_q) + mu_q_abs + scale_q*torch.exp(-mu_q_abs/scale_q) - 1, -1), -1) # B / 1
 
 
 def sampling_gauss(mu, var, temp=None):
@@ -725,17 +632,6 @@ def sampling_laplace(param, log_scale=None):
 
     return mu - scale * eps.sign() * torch.log1p(-eps.abs()) # scale
  
-
-def kl_laplace_laplace_param(mu_q, sigma_q, mu_p, sigma_p):
-    """ ln(λ_j/λ_i) + |θ_i-θ_j|/λ_j + λ_i/λ_j * exp(−|θ_i-θ_j|/λ_i) − 1 """
-
-    scale_q = torch.clamp(sigma_q.exp(), min=1e-12)
-    scale_p = torch.clamp(sigma_p.exp(), min=1e-12)
-
-    mu_abs = torch.abs(mu_q-mu_p)
-
-    return torch.mean(torch.sum(torch.log(scale_p/scale_q) + mu_abs/scale_p + (scale_q/scale_p)*torch.exp(-mu_abs/scale_q) - 1, -1), -1) # B / 1
-
 
 def kl_laplace_laplace(q, p, sum_flag=True):
     """ ln(λ_j/λ_i) + |θ_i-θ_j|/λ_j + λ_i/λ_j * exp(−|θ_i-θ_j|/λ_i) − 1 """
@@ -1834,8 +1730,7 @@ class GRU_EXCIT_DECODER(nn.Module):
 
 
 class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
-    """
-    GRU, wave, decoder, DualGPU, Compact, Multinand, CF
+    """GRU, wave, decoder, DualGRU, Compact, Multiband, Coarse/Fine
     """
     def __init__(self, feat_dim=80, upsampling_factor=120, hidden_units=640, hidden_units_2=32, n_quantize=65536, s_dim=320, seg_conv_flag=True,
             kernel_size=7, dilation_size=1, do_prob=0, causal_conv=False, use_weight_norm=True, lpc=6, remove_scale_in_weight_norm=True,
@@ -2335,6 +2230,8 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
 
 
 class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND(nn.Module):
+    """GRU, wave, decoder, DualGRU, Compact, Multiband (NO dual softmax)
+    """
     def __init__(self, feat_dim=80, upsampling_factor=120, hidden_units=640, hidden_units_2=32, n_quantize=512,
             lpc=6, kernel_size=7, dilation_size=1, do_prob=0, causal_conv=False, use_weight_norm=True,
                 right_size=0, n_bands=5, pad_first=False):
@@ -2546,66 +2443,6 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND(nn.Module):
         self.apply(_remove_weight_norm)
 
 
-class ModulationSpectrumLoss(nn.Module):
-    def __init__(self, fftsize=256):
-        super(ModulationSpectrumLoss, self).__init__()
-        self.fftsize = fftsize
-
-    def forward(self, x, y):
-        """ x : B x T x C / T x C
-            y : B x T x C / T x C
-            return : B, B or 1, 1 [norm, error in log10] """
-        if len(x.shape) > 2: # B x T x C
-            padded_x = F.pad(x, (0, 0, 0, self.fftsize-x.shape[1]), "constant", 0)
-            padded_y = F.pad(y, (0, 0, 0, self.fftsize-y.shape[1]), "constant", 0)
-
-            csp_x = torch.fft.fftn(padded_x)
-            csp_y = torch.fft.fftn(padded_y)
-
-            magsp_x = torch.abs(csp_x)
-            magsp_y = torch.abs(csp_y)
-
-            diff = magsp_y - magsp_x
-            norm = LA.norm(diff, 'fro', dim=(1,2)) / LA.norm(magsp_y, 'fro', dim=(1,2)) \
-                    + diff.abs().sum(-1).sum(-1) / magsp_y.sum(-1).sum(-1)
-            if x.shape[1] > 1:
-                log_diff = torch.log10(torch.clamp(magsp_y, min=1e-13)) - torch.log10(torch.clamp(magsp_x, min=1e-13))
-                err = log_diff.abs().mean(-1).mean(-1) + (log_diff**2).mean(-1).mean(-1).sqrt()
-            else:
-                err = (torch.log10(torch.clamp(magsp_y, min=1e-13)) - torch.log10(torch.clamp(magsp_x, min=1e-13))).abs().mean(-1).mean(-1)
-        else: # T x C
-            padded_x = F.pad(x, (0, self.fftsize-x.shape[1]), "constant", 0)
-            padded_y = F.pad(y, (0, self.fftsize-y.shape[1]), "constant", 0)
-
-            csp_x = torch.fft.fftn(padded_x)
-            csp_y = torch.fft.fftn(padded_y)
-
-            magsp_x = torch.abs(csp_x)
-            magsp_y = torch.abs(csp_y)
-
-            diff = magsp_y - magsp_x
-            norm = LA.norm(diff, 'fro') / LA.norm(magsp_y, 'fro') + diff.abs().sum() / magsp_y.sum()
-            if x.shape[0] > 1:
-                log_diff = torch.log10(torch.clamp(magsp_y, min=1e-13)) - torch.log10(torch.clamp(magsp_x, min=1e-13))
-                err = log_diff.abs().mean() + (log_diff**2).mean().sqrt()
-            else:
-                err = (torch.log10(torch.clamp(magsp_y, min=1e-13)) - torch.log10(torch.clamp(magsp_x, min=1e-13))).abs().mean()
-
-        return norm, err
-
-
-class LaplaceWavLoss(nn.Module):
-    def __init__(self):
-        super(LaplaceWavLoss, self).__init__()
-        self.c = 0.69314718055994530941723212145818 # ln(2)
-
-    def forward(self, mu, log_b, target):
-        if len(mu.shape) == 2: # B x T
-            return torch.mean(self.c + log_b + torch.abs(target-mu)/log_b.exp(), -1) # B x 1
-        else: # T
-            return torch.mean(self.c + log_b + torch.abs(target-mu)/log_b.exp()) # 1
-
-
 class GaussLoss(nn.Module):
     def __init__(self, dim=None):
     #def __init__(self, dim):
@@ -2630,260 +2467,6 @@ class GaussLoss(nn.Module):
                 return torch.mean(self.c + 0.5*(torch.sum(torch.log(s), -1) + torch.sum((mu-target)**2/s, -1)))
             else:
                 return torch.mean(self.c + 0.5*(torch.log(s) + (mu-target)**2/s))
-
-
-class LaplaceLoss(nn.Module):
-    def __init__(self, sum=True):
-        super(LaplaceLoss, self).__init__()
-        self.c = 0.69314718055994530941723212145818 # ln(2)
-        self.sum =sum
-
-    def forward(self, mu, log_b, target):
-        if len(mu.shape) > 2: # B x T x C
-            if self.sum:
-                return torch.mean(torch.sum(self.c + log_b + torch.abs(target-mu)/log_b.exp(), -1), -1) # B x 1
-            else:
-                return torch.mean(torch.mean(self.c + log_b + torch.abs(target-mu)/log_b.exp(), -1), -1) # B x 1
-        else: # T x C
-            if self.sum:
-                return torch.mean(torch.sum(self.c + log_b + torch.abs(target-mu)/log_b.exp(), -1)) # 1
-            else:
-                return torch.mean(self.c + log_b + torch.abs(target-mu)/log_b.exp()) # 1
-
-
-def laplace_logits(mu, b, disc, log_b):
-    return -0.69314718055994530941723212145818 - log_b - torch.abs(disc-mu)/b # log_like (Laplace)
-
-
-class LaplaceLogits(nn.Module):
-    def __init__(self):
-        super(LaplaceLogits, self).__init__()
-        self.c = 0.69314718055994530941723212145818 # ln(2)
-
-    def forward(self, mu, b, disc, log_b):
-        return -self.c - log_b - torch.abs(disc-mu)/b # log_like (Laplace)
-
-
-class CausalConv1d(nn.Module):
-    """1D DILATED CAUSAL CONVOLUTION"""
-
-    def __init__(self, in_channels, out_channels, kernel_size, dil_fact=0, bias=True):
-        super(CausalConv1d, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.dil_fact = dil_fact
-        self.dilation = self.kernel_size**self.dil_fact
-        self.padding = self.kernel_size**(self.dil_fact+1) - self.dilation
-        self.bias = bias
-        self.conv = nn.Conv1d(self.in_channels, self.out_channels, self.kernel_size, padding=self.padding, \
-                                dilation=self.dilation, bias=self.bias)
-
-    def forward(self, x):
-        """Forward calculation
-
-        Arg:
-            x (Variable): float tensor variable with the shape  (B x C x T)
-
-        Return:
-            (Variable): float tensor variable with the shape (B x C x T)
-        """
-        return self.conv(x)[:,:,:x.shape[2]]
-
-
-class DSWNV(nn.Module):
-    """SHALLOW WAVENET VOCODER WITH SOFTMAX OUTPUT"""
-
-    def __init__(self, n_quantize=256, n_aux=54, hid_chn=192, skip_chn=256, aux_kernel_size=3, nonlinear_conv=False,
-                aux_dilation_size=2, dilation_depth=3, dilation_repeat=3, kernel_size=6, right_size=0, pad_first=True,
-                upsampling_factor=110, audio_in_flag=False, wav_conv_flag=False, do_prob=0, use_weight_norm=True):
-        super(DSWNV, self).__init__()
-        self.n_aux = n_aux
-        # μ-law 8bit = 2^8 = 256
-        self.n_quantize = n_quantize
-        self.upsampling_factor = upsampling_factor
-        self.in_audio_dim = self.n_quantize
-        self.n_hidch = hid_chn
-        self.n_skipch = skip_chn
-        self.kernel_size = kernel_size
-        self.dilation_depth = dilation_depth
-        self.dilation_repeat = dilation_repeat
-        self.aux_kernel_size = aux_kernel_size
-        self.aux_dilation_size = aux_dilation_size
-        self.audio_in_flag = audio_in_flag
-        self.wav_conv_flag = wav_conv_flag
-        self.use_weight_norm = use_weight_norm
-        self.right_size = right_size
-        self.nonlinear_conv = nonlinear_conv
-        self.s_dim = 320
-        self.pad_first = pad_first
-
-        # Input Layers
-        self.scale_in = nn.Conv1d(self.n_aux, self.n_aux, 1)
-        if self.right_size <= 0:
-            self.conv = CausalDilConv1d(in_dim=self.n_aux, kernel_size=aux_kernel_size,
-                                        layers=aux_dilation_size, nonlinear=self.nonlinear_conv, pad_first=self.pad_first)
-            self.pad_left = self.conv.padding
-            self.pad_right = 0
-        else:
-            self.conv = SkewedConv1d(in_dim=self.n_aux, kernel_size=aux_kernel_size,
-                                        right_size=self.right_size, nonlinear=self.nonlinear_conv, pad_first=self.pad_first)
-            self.pad_left = self.conv.left_size
-            self.pad_right = self.conv.right_size
-        conv_s_c = [nn.Conv1d(self.n_aux*self.conv.rec_field, self.s_dim, 1), nn.ReLU()]
-        self.conv_s_c = nn.Sequential(*conv_s_c)
-
-        self.in_aux_dim = self.s_dim
-        self.upsampling = UpSampling(self.upsampling_factor)
-        if not self.audio_in_flag:
-            self.in_tot_dim = self.in_aux_dim
-        else:
-            self.in_tot_dim = self.in_aux_dim+self.in_audio_dim
-        if self.wav_conv_flag:
-            self.wav_conv = nn.Conv1d(self.in_audio_dim, self.n_hidch, 1)
-            self.causal = CausalConv1d(self.n_hidch, self.n_hidch, self.kernel_size, dil_fact=0)
-        else:
-            self.causal = CausalConv1d(self.in_audio_dim, self.n_hidch, self.kernel_size, dil_fact=0)
-
-        # Dilated Convolutional Recurrent Neural Network (DCRNN)
-        self.dil_facts = [i for i in range(self.dilation_depth)] * self.dilation_repeat
-        self.in_x = nn.ModuleList()      # [pointwiseConv1d]
-        self.dil_h = nn.ModuleList()     # [CausalConv1d]
-        self.padding = []                # [padding based on ConcalConv1d]
-        self.out_skip = nn.ModuleList()  # [pointwiseConv1d]
-        for i, d in enumerate(self.dil_facts):
-            self.in_x += [nn.Conv1d(self.in_tot_dim, self.n_hidch*2, 1)]
-            self.dil_h += [CausalConv1d(self.n_hidch, self.n_hidch*2, self.kernel_size, dil_fact=d)]
-            self.padding.append(self.dil_h[i].padding)
-            self.out_skip += [nn.Conv1d(self.n_hidch, self.n_skipch, 1)]
-        self.receptive_field = sum(self.padding) + self.kernel_size-1
-
-        # Output Layers: FC with pointwiseConv (self.n_skipch -> self.n_quantize -> self.n_quantize)
-        self.out_1 = nn.Conv1d(self.n_skipch, self.n_quantize, 1)
-        self.out_2 = nn.Conv1d(self.n_quantize, self.n_quantize, 1)
-
-
-    def forward(self, aux, audio, first=False, do=False):
-        audio = F.one_hot(audio, num_classes=self.n_quantize).float().transpose(1,2)
-        # Input	Features
-        x = self.upsampling(self.conv_s_c(self.conv(self.scale_in(aux.transpose(1,2)))))
-        if self.audio_in_flag:
-            x = torch.cat((x,audio),1) # B x C x T
-        # Initial Hidden Units
-        if not self.wav_conv_flag:
-            h = F.softsign(self.causal(audio)) # B x C x T
-        else:
-            h = F.softsign(self.causal(self.wav_conv(audio))) # B x C x T
-
-        # DCRNN blocks
-        ##                                       pointConv     causalConv       pointConv
-        sum_out, h = self._dcrnn_forward(x, h, self.in_x[0], self.dil_h[0], self.out_skip[0])
-        for l in range(1,len(self.dil_facts)):
-            out, h = self._dcrnn_forward(x, h, self.in_x[l], self.dil_h[l], self.out_skip[l])
-            sum_out += out
-
-        # Output
-        # sumout-ReLU-FC-ReLU-FC(-softmax)
-        return self.out_2(F.relu(self.out_1(F.relu(sum_out)))).transpose(1,2)
-
-    def _dcrnn_forward(self, x, h, in_x, dil_h, out_skip):
-        #    pointConv*causalConv
-        x_h_ = in_x(x)*dil_h(h)
-        z = torch.sigmoid(x_h_[:,:self.n_hidch,:])
-        # Gated tanh
-        h = (1-z)*torch.tanh(x_h_[:,self.n_hidch:,:]) + z*h
-        #      pointConv
-        return out_skip(h), h
-
-    def _generate_dcrnn_forward(self, x, h, in_x, dil_h, out_skip):
-        x_h_ = in_x(x)*dil_h(h)[:,:,-1:]
-        z = torch.sigmoid(x_h_[:,:self.n_hidch,:])
-        h = (1-z)*torch.tanh(x_h_[:,self.n_hidch:,:]) + z*h[:,:,-1:]
-        return out_skip(h), h
-
-    def batch_fast_generate(self, audio, aux, n_samples_list, intervals=4410):
-        with torch.no_grad():
-            # set max length
-            max_samples = max(n_samples_list)
-    
-            # upsampling
-            aux = F.pad(aux.transpose(1,2), (self.pad_left,self.pad_right), "replicate").transpose(1,2)
-            x = self.upsampling(self.conv_s_c(self.conv(self.scale_in(aux.transpose(1,2))))) # B x C x T
-    
-            # padding if the length less than
-            n_pad = self.receptive_field
-            if n_pad > 0:
-                audio = F.pad(audio, (n_pad, 0), "constant", self.n_quantize // 2)
-                x = F.pad(x, (n_pad, 0), "replicate")
-
-            audio = F.one_hot(audio, num_classes=self.n_quantize).float().transpose(1,2)
-            if not self.audio_in_flag:
-                x_ = x[:, :, :audio.size(2)]
-            else:
-                x_ = torch.cat((x[:, :, :audio.size(2)],audio),1)
-            if self.wav_conv_flag:
-                audio = self.wav_conv(audio) # B x C x T
-            output = F.softsign(self.causal(audio)) # B x C x T
-            output_buffer = []
-            buffer_size = []
-            for l in range(len(self.dil_facts)):
-                _, output = self._dcrnn_forward(
-                    x_, output, self.in_x[l], self.dil_h[l],
-                    self.out_skip[l])
-                if l < len(self.dil_facts)-1:
-                    buffer_size.append(self.padding[l+1])
-                else:
-                    buffer_size.append(self.kernel_size - 1)
-                output_buffer.append(output[:, :, -buffer_size[l] - 1: -1])
-    
-            # generate
-            samples = audio.data  # B x T
-            time_sample = []
-            out_idx = self.kernel_size*2-1
-            for i in range(max_samples):
-                samples_size = samples.size(-1)
-                if not self.audio_in_flag:
-                    x_ = x[:, :, (samples_size-1):samples_size]
-                else:
-                    x_ = torch.cat((x[:, :, (samples_size-1):samples_size],samples[:,:,-1:]),1)
-                output = F.softsign(self.causal(samples[:,:,-out_idx:])[:,:,-self.kernel_size:]) # B x C x T
-                output_buffer_next = []
-                skip_connections = []
-                for l in range(len(self.dil_facts)):
-                    #start_ = time.time()
-                    skip, output = self._generate_dcrnn_forward(
-                        x_, output, self.in_x[l], self.dil_h[l],
-                        self.out_skip[l])
-                    output = torch.cat((output_buffer[l], output), 2)
-                    output_buffer_next.append(output[:, :, -buffer_size[l]:])
-                    skip_connections.append(skip)
-    
-                # update buffer
-                output_buffer = output_buffer_next
-    
-                # get predicted sample
-                output = self.out_2(F.relu(self.out_1(F.relu(sum(skip_connections))))).transpose(1,2)[:,-1]
-
-                posterior = F.softmax(output, dim=-1)
-                dist = torch.distributions.OneHotCategorical(posterior)
-                sample = dist.sample().data  # B
-                if i > 0:
-                    out_samples = torch.cat((out_samples, torch.argmax(sample, dim=--1).unsqueeze(1)), 1)
-                else:
-                    out_samples = torch.argmax(sample, dim=--1).unsqueeze(1)
-
-                if self.wav_conv_flag:
-                    samples = torch.cat((samples, self.wav_conv(sample.unsqueeze(2))), 2)
-                else:
-                    samples = torch.cat((samples, sample.unsqueeze(2)), 2)
-            samples = out_samples
-    
-            # devide batches into each waveform
-            samples = samples[:, -max_samples:].cpu().numpy()
-            samples_list = np.split(samples, samples.shape[0], axis=0)
-            samples_list = [s[0, :n_s] for s, n_s in zip(samples_list, n_samples_list)]
-    
-            return samples_list
 
 
 class STFTLoss(torch.nn.Module):
