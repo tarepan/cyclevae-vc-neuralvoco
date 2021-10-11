@@ -425,7 +425,8 @@ class DualFC_(nn.Module):
 
 
 class DualFC(nn.Module):
-    """Compact Dual Fully Connected layers based on LPCNet"""
+    """Compact Dual Fully Connected layers based on LPCNet
+    """
 
     def __init__(self, in_dim=32, out_dim=512, lpc=6, bias=True, n_bands=5, mid_out=32, lin_flag=False):
         super(DualFC, self).__init__()
@@ -1861,12 +1862,13 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
         Forward pass for single sample-step.
         
         Args:
+            c:
             x_c_prev: Sample coarse t-1
             x_f_prev: Sample fine   t-1
-
-            h: Hidden state of Sparse GRU
-            h_2: Hidden state of Dense GRU
-            h_f: Hidden state of Fine GRU
+            x_c:
+            h: Initial hidden state of Sparse GRU for inter-batch continuous learning
+            h_2: Initial hidden state of Dense GRU for inter-batch continuous learning
+            h_f: Initial hidden state of Fine GRU for inter-batch continuous learning
             h_spk: ※ not used
         Returns:
             Updated hidden states (h, h_2, h_f) are returned.
@@ -1913,26 +1915,16 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
         # (features, embedding_coarse, embedding_fine) => (out, h)
         if x_c_prev.shape[1] < conv.shape[1]:
             conv = conv[:,:x_c_prev.shape[1]]
-        if h is not None:
-            out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
-                        self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2), h) # B x T x C -> B x C x T -> B x T x C
-        else:
-            out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
-                        self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2))
+        out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
+                    self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2), h) # B x T x C -> B x C x T -> B x T x C
 
         # Dense GRU
         # (features, out_GRU_sparse) => (out_GRU_dense, h_2)
-        if h_2 is not None:
-            out_2, h_2 = self.gru_2(torch.cat((conv, out), 2), h_2) # B x T x C -> B x C x T -> B x T x C
-        else:
-            out_2, h_2 = self.gru_2(torch.cat((conv, out), 2))
+        out_2, h_2 = self.gru_2(torch.cat((conv, out), 2), h_2) # B x T x C -> B x C x T -> B x T x C
 
         # GRU_fine
         # (features, embedding_coarse, out_GRU_dense) => (out_GRU_fine, h_f)
-        if h_f is not None:
-            out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2), h_f)
-        else:
-            out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2))
+        out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2), h_f)
 
         # output
         if self.lpc > 0:
@@ -1993,27 +1985,17 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND_CF(nn.Module):
         conv_sc = self.conv_s_c(seg_conv).transpose(1,2)
         conv = torch.repeat_interleave(conv_sc,self.upsampling_factor,dim=1)
 
-        # GRU1
+        # GRU1: B x T x C -> B x C x T -> B x T x C
         if x_c_prev.shape[1] < conv.shape[1]:
             conv = conv[:,:x_c_prev.shape[1]]
-        if h is not None:
-            out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
-                        self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2), h) # B x T x C -> B x C x T -> B x T x C
-        else:
-            out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
-                        self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2))
+        out, h = self.gru(torch.cat((conv, self.embed_c_wav(x_c_prev).reshape(x_c_prev.shape[0], x_c_prev.shape[1], -1),
+                    self.embed_f_wav(x_f_prev).reshape(x_f_prev.shape[0], x_f_prev.shape[1], -1)), 2), h)
 
-        # GRU2
-        if h_2 is not None:
-            out_2, h_2 = self.gru_2(torch.cat((conv, out), 2), h_2) # B x T x C -> B x C x T -> B x T x C
-        else:
-            out_2, h_2 = self.gru_2(torch.cat((conv, out), 2))
+        # GRU2: B x T x C -> B x C x T -> B x T x C
+        out_2, h_2 = self.gru_2(torch.cat((conv, out), 2), h_2)
 
         # GRU_fine
-        if h_f is not None:
-            out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2), h_f)
-        else:
-            out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2))
+        out_f, h_f = self.gru_f(torch.cat((conv, self.embed_c_wav(x_c).reshape(x_c.shape[0], x_c.shape[1], -1), out_2), 2), h_f)
 
         # output
         if self.lpc > 0:
@@ -2290,9 +2272,10 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND(nn.Module):
         # Output layers
         self.out = DualFC(self.hidden_units_2, self.n_quantize, self.lpc, n_bands=self.n_bands, mid_out=self.mid_out)
 
-        # Prev logits if using data-driven lpc
+        # Prev learnable/embedded logits/energy_vector if using data-driven lpc
         if self.lpc > 0:
             self.logits = nn.Embedding(self.n_quantize, self.n_quantize)
+            # Initialization
             logits_param = torch.empty(self.n_quantize, self.n_quantize).fill_(0)
             for i in range(self.n_quantize):
                 logits_param[i,i] = 1
@@ -2306,23 +2289,28 @@ class GRU_WAVE_DECODER_DUALGRU_COMPACT_MBAND(nn.Module):
             self.apply(initialize)
 
     def forward(self, c, x_prev, h=None, h_2=None, h_spk=None, do=False, x_lpc=None):
+        """
+        Args:
+            c:
+            x_prev:
+            h:      Initial hidden state of Sparse GRU for inter-batch continuous learning
+            h_2:    Initial hidden state of Dense GRU  for inter-batch continuous learning
+            h_spk:  Not used
+            do:     Drop out if True
+            x_lpc: 
+        """
+
         # Input
         if self.do_prob > 0 and do:
             conv = self.drop(torch.repeat_interleave(self.conv_s_c(self.conv(self.scale_in(c.transpose(1,2)))).transpose(1,2),self.upsampling_factor,dim=1))
         else:
             conv = torch.repeat_interleave(self.conv_s_c(self.conv(self.scale_in(c.transpose(1,2)))).transpose(1,2),self.upsampling_factor,dim=1)
 
-        # GRU1
-        if h is not None:
-            out, h = self.gru(torch.cat((conv, self.embed_wav(x_prev).reshape(x_prev.shape[0], x_prev.shape[1], -1)),2), h) # B x T x C -> B x C x T -> B x T x C
-        else:
-            out, h = self.gru(torch.cat((conv, self.embed_wav(x_prev).reshape(x_prev.shape[0], x_prev.shape[1], -1)),2))
+        # GRU_LargeSparse: (B, T, C) -> (B, C, T) -> (B, T, C)
+        out, h = self.gru(torch.cat((conv, self.embed_wav(x_prev).reshape(x_prev.shape[0], x_prev.shape[1], -1)),2), h)
 
-        # GRU2
-        if h_2 is not None:
-            out, h_2 = self.gru_2(torch.cat((conv, out),2), h_2) # B x T x C -> B x C x T -> B x T x C
-        else:
-            out, h_2 = self.gru_2(torch.cat((conv, out),2))
+        # GRU_SmallDense:  (B, T, C) -> (B, C, T) -> (B, T, C)
+        out, h_2 = self.gru_2(torch.cat((conv, out),2), h_2) 
 
         # output
         if self.lpc > 0:
