@@ -2699,6 +2699,7 @@ class DSWNV(nn.Module):
                 upsampling_factor=110, audio_in_flag=False, wav_conv_flag=False, do_prob=0, use_weight_norm=True):
         super(DSWNV, self).__init__()
         self.n_aux = n_aux
+        # μ-law 8bit = 2^8 = 256
         self.n_quantize = n_quantize
         self.upsampling_factor = upsampling_factor
         self.in_audio_dim = self.n_quantize
@@ -2709,7 +2710,6 @@ class DSWNV(nn.Module):
         self.dilation_repeat = dilation_repeat
         self.aux_kernel_size = aux_kernel_size
         self.aux_dilation_size = aux_dilation_size
-        self.do_prob = do_prob
         self.audio_in_flag = audio_in_flag
         self.wav_conv_flag = wav_conv_flag
         self.use_weight_norm = use_weight_norm
@@ -2735,8 +2735,6 @@ class DSWNV(nn.Module):
 
         self.in_aux_dim = self.s_dim
         self.upsampling = UpSampling(self.upsampling_factor)
-        if self.do_prob > 0:
-            self.aux_drop = nn.Dropout(p=self.do_prob)
         if not self.audio_in_flag:
             self.in_tot_dim = self.in_aux_dim
         else:
@@ -2748,42 +2746,27 @@ class DSWNV(nn.Module):
             self.causal = CausalConv1d(self.in_audio_dim, self.n_hidch, self.kernel_size, dil_fact=0)
 
         # Dilated Convolutional Recurrent Neural Network (DCRNN)
-        self.padding = []
         self.dil_facts = [i for i in range(self.dilation_depth)] * self.dilation_repeat
-        logging.info(self.dil_facts)
-        self.in_x = nn.ModuleList()
-        self.dil_h = nn.ModuleList()
-        self.out_skip = nn.ModuleList()
+        self.in_x = nn.ModuleList()      # [pointwiseConv1d]
+        self.dil_h = nn.ModuleList()     # [CausalConv1d]
+        self.padding = []                # [padding based on ConcalConv1d]
+        self.out_skip = nn.ModuleList()  # [pointwiseConv1d]
         for i, d in enumerate(self.dil_facts):
             self.in_x += [nn.Conv1d(self.in_tot_dim, self.n_hidch*2, 1)]
             self.dil_h += [CausalConv1d(self.n_hidch, self.n_hidch*2, self.kernel_size, dil_fact=d)]
             self.padding.append(self.dil_h[i].padding)
             self.out_skip += [nn.Conv1d(self.n_hidch, self.n_skipch, 1)]
-        logging.info(self.padding)
         self.receptive_field = sum(self.padding) + self.kernel_size-1
-        logging.info(self.receptive_field)
-        if self.do_prob > 0:
-            self.dcrnn_drop = nn.Dropout(p=self.do_prob)
 
-        # Output Layers
+        # Output Layers: FC with pointwiseConv (self.n_skipch -> self.n_quantize -> self.n_quantize)
         self.out_1 = nn.Conv1d(self.n_skipch, self.n_quantize, 1)
         self.out_2 = nn.Conv1d(self.n_quantize, self.n_quantize, 1)
 
-        ## apply weight norm
-        if self.use_weight_norm:
-            self.apply_weight_norm()
-            torch.nn.utils.remove_weight_norm(self.scale_in)
-        else:
-            self.apply(initialize)
 
     def forward(self, aux, audio, first=False, do=False):
         audio = F.one_hot(audio, num_classes=self.n_quantize).float().transpose(1,2)
         # Input	Features
         x = self.upsampling(self.conv_s_c(self.conv(self.scale_in(aux.transpose(1,2)))))
-        if first:
-            x = F.pad(x, (self.receptive_field, 0), "replicate")
-        if self.do_prob > 0 and do:
-            x = self.aux_drop(x)
         if self.audio_in_flag:
             x = torch.cat((x,audio),1) # B x C x T
         # Initial Hidden Units
@@ -2791,55 +2774,25 @@ class DSWNV(nn.Module):
             h = F.softsign(self.causal(audio)) # B x C x T
         else:
             h = F.softsign(self.causal(self.wav_conv(audio))) # B x C x T
+
         # DCRNN blocks
+        ##                                       pointConv     causalConv       pointConv
         sum_out, h = self._dcrnn_forward(x, h, self.in_x[0], self.dil_h[0], self.out_skip[0])
-        if self.do_prob > 0 and do:
-            for l in range(1,len(self.dil_facts)):
-                if (l+1)%self.dilation_depth == 0:
-                    out, h = self._dcrnn_forward_drop(x, h, self.in_x[l], self.dil_h[l], self.out_skip[l])
-                else:
-                    out, h = self._dcrnn_forward(x, h, self.in_x[l], self.dil_h[l], self.out_skip[l])
-                sum_out += out
-        else:
-            for l in range(1,len(self.dil_facts)):
-                out, h = self._dcrnn_forward(x, h, self.in_x[l], self.dil_h[l], self.out_skip[l])
-                sum_out += out
+        for l in range(1,len(self.dil_facts)):
+            out, h = self._dcrnn_forward(x, h, self.in_x[l], self.dil_h[l], self.out_skip[l])
+            sum_out += out
+
         # Output
+        # sumout-ReLU-FC-ReLU-FC(-softmax)
         return self.out_2(F.relu(self.out_1(F.relu(sum_out)))).transpose(1,2)
 
-    def apply_weight_norm(self):
-        """Apply weight normalization module from all of the layers."""
-        def _apply_weight_norm(m):
-            if isinstance(m, torch.nn.Conv1d) \
-                or isinstance(m, torch.nn.ConvTranspose2d):
-                torch.nn.utils.weight_norm(m)
-                logging.info(f"Weight norm is applied to {m}.")
-
-        self.apply(_apply_weight_norm)
-
-    def remove_weight_norm(self):
-        """Remove weight normalization module from all of the layers."""
-        def _remove_weight_norm(m):
-            try:
-                if isinstance(m, torch.nn.Conv1d) \
-                    or isinstance(m, torch.nn.ConvTranspose2d):
-                    torch.nn.utils.remove_weight_norm(m)
-                    logging.info(f"Weight norm is removed from {m}.")
-            except ValueError:  # this module didn't have weight norm
-                return
-
-        self.apply(_remove_weight_norm)
-
-    def _dcrnn_forward_drop(self, x, h, in_x, dil_h, out_skip):
-        x_h_ = in_x(x)*dil_h(h)
-        z = torch.sigmoid(x_h_[:,:self.n_hidch,:])
-        h = (1-z)*torch.tanh(x_h_[:,self.n_hidch:,:]) + z*h
-        return out_skip(h), self.dcrnn_drop(h)
-
     def _dcrnn_forward(self, x, h, in_x, dil_h, out_skip):
+        #    pointConv*causalConv
         x_h_ = in_x(x)*dil_h(h)
         z = torch.sigmoid(x_h_[:,:self.n_hidch,:])
+        # Gated tanh
         h = (1-z)*torch.tanh(x_h_[:,self.n_hidch:,:]) + z*h
+        #      pointConv
         return out_skip(h), h
 
     def _generate_dcrnn_forward(self, x, h, in_x, dil_h, out_skip):
@@ -2857,17 +2810,13 @@ class DSWNV(nn.Module):
             aux = F.pad(aux.transpose(1,2), (self.pad_left,self.pad_right), "replicate").transpose(1,2)
             x = self.upsampling(self.conv_s_c(self.conv(self.scale_in(aux.transpose(1,2))))) # B x C x T
     
-            logging.info(x.shape)
             # padding if the length less than
             n_pad = self.receptive_field
             if n_pad > 0:
                 audio = F.pad(audio, (n_pad, 0), "constant", self.n_quantize // 2)
                 x = F.pad(x, (n_pad, 0), "replicate")
 
-            logging.info(x.shape)
-            #audio = OneHot(audio).transpose(1,2)
             audio = F.one_hot(audio, num_classes=self.n_quantize).float().transpose(1,2)
-            #audio = OneHot(audio)
             if not self.audio_in_flag:
                 x_ = x[:, :, :audio.size(2)]
             else:
@@ -2890,10 +2839,8 @@ class DSWNV(nn.Module):
             # generate
             samples = audio.data  # B x T
             time_sample = []
-            start = time.time()
             out_idx = self.kernel_size*2-1
             for i in range(max_samples):
-                start_sample = time.time()
                 samples_size = samples.size(-1)
                 if not self.audio_in_flag:
                     x_ = x[:, :, (samples_size-1):samples_size]
@@ -2929,26 +2876,9 @@ class DSWNV(nn.Module):
                     samples = torch.cat((samples, self.wav_conv(sample.unsqueeze(2))), 2)
                 else:
                     samples = torch.cat((samples, sample.unsqueeze(2)), 2)
-    
-                # show progress
-                time_sample.append(time.time()-start_sample)
-                #if intervals is not None and (i + 1) % intervals == 0:
-                if (i + 1) % intervals == 0:
-                    logging.info("%d/%d estimated time = %.6f sec (%.6f sec / sample)" % (
-                        (i + 1), max_samples,
-                        (max_samples - i - 1) * ((time.time() - start) / intervals),
-                        (time.time() - start) / intervals))
-                    start = time.time()
-                    #break
-            logging.info("average time / sample = %.6f sec (%ld samples) [%.3f kHz/s]" % (
-                        np.mean(np.array(time_sample)), len(time_sample),
-                        1.0/(1000*np.mean(np.array(time_sample)))))
-            logging.info("average throughput / sample = %.6f sec (%ld samples * %ld) [%.3f kHz/s]" % (
-                        sum(time_sample)/(len(time_sample)*len(n_samples_list)), len(time_sample),
-                        len(n_samples_list), len(time_sample)*len(n_samples_list)/(1000*sum(time_sample))))
             samples = out_samples
     
-            # devide into each waveform
+            # devide batches into each waveform
             samples = samples[:, -max_samples:].cpu().numpy()
             samples_list = np.split(samples, samples.shape[0], axis=0)
             samples_list = [s[0, :n_s] for s, n_s in zip(samples_list, n_samples_list)]
