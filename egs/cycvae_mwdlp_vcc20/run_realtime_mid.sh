@@ -1,26 +1,7 @@
 #!/bin/bash
-###################################################################################################
-#        SCRIPT FOR High-Fidelity and Low-Latency Universal Neural Vocoder based on               #
-#        Multiband WaveRNN with Data-driven Linear Prediction (MWDLP)                             #
-###################################################################################################
-
-# Copyright 2021 Patrick Lumban Tobing (Nagoya University)
-#  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 . ./path.sh
-. ./cmd.sh
 
-# USER SETTINGS {{{
-#######################################
-#           STAGE SETTING             #
-#######################################
-# {{{
-# 0: dump model and compile C program
-# 1: run analysis-synthesis with real-time demo using cpu
-# 2: run analysis-synthesis and mel-spectrogram output/input with real-time demo using cpu
-# 3: run vc using speaker point target with real-time demo using cpu
-# 4: run vc using interpolated speaker target with real-time demo using cpu
-# }}}
 stage=0
 #stage=1
 #stage=2
@@ -262,7 +243,7 @@ fi
 expdir_vc=exp/tr_${setting_vc}
 echo $expdir_vc
 if [ -f "${expdir_vc}/checkpoint-last.pkl" ]; then
-    ${train_cmd} ${expdir_vc}/get_model_indices.log \
+    run.pl ${expdir_vc}/get_model_indices.log \
         get_model_indices.py \
             --expdir ${expdir_vc} \
             --confdir conf/${data_name}_vc
@@ -280,7 +261,7 @@ fi
 expdir_wave=exp/tr_${setting_wave}
 echo $expdir_wave
 if [ -f "${expdir_wave}/checkpoint-last.pkl" ]; then
-    ${train_cmd} ${expdir_wave}/get_model_indices.log \
+    run.pl ${expdir_wave}/get_model_indices.log \
         get_model_indices.py \
             --expdir ${expdir_wave} \
             --confdir conf/${data_name}_wave
@@ -298,7 +279,7 @@ fi
 expdir_ft=exp/tr_${setting_ft}
 echo $expdir_ft
 if [ -f "${expdir_ft}/checkpoint-last.pkl" ]; then
-    ${train_cmd} ${expdir_ft}/get_model_indices.log \
+    run.pl ${expdir_ft}/get_model_indices.log \
         get_model_indices.py \
             --expdir ${expdir_ft} \
             --confdir conf/${data_name}_ft
@@ -321,7 +302,7 @@ if [ `echo ${stage} | grep 0` ];then
     echo ""
     echo "model is been dumping, please check ${expdir_ft}/dump_model.log"
     echo ""
-    ${train_cmd} ${expdir_ft}/dump_model.log \
+    run.pl ${expdir_ft}/dump_model.log \
         dump_sparse-cyclevae_jnt_mwdlp-10b.py \
             ${expdir_ft}/model.conf \
             ${expdir_ft}/checkpoint-${min_idx_ft}.pkl \
@@ -581,7 +562,7 @@ if [ `echo ${stage} | grep 4` ];then
     config=${expdir_ft}/model.conf
     outdir=${expdir_ft}/spkidtr-${min_idx_cycvae}-${min_idx_wave}-${min_idx_ft}
     mkdir -p $outdir
-    ${cuda_cmd} ${expdir_ft}/log/decode_spkidtr_${min_idx_cycvae}-${min_idx_wave}-${min_idx_ft}.log \
+    run.pl --gpu 1 ${expdir_ft}/log/decode_spkidtr_${min_idx_cycvae}-${min_idx_wave}-${min_idx_ft}.log \
         decode_spkidtr_map.py \
             --outdir ${outdir} \
             --model ${model} \
