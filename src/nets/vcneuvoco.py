@@ -448,6 +448,9 @@ class DualFC(nn.Module):
             self.lpc6 = self.lpc2*3
             self.lpc6bands = self.lpc6*self.n_bands
 
+        # conv: pointwiseConv1d (FC equivalent) for DualFC
+        # fact: Embedding (vocabulary size is 1 ...??)
+        # out:  pointwiseConv1d (FC equivalent) for residual
         if self.mid_out is not None:
             self.mid_out_bands = self.mid_out*self.n_bands
             self.mid_out_bands2 = self.mid_out_bands*2
@@ -476,16 +479,54 @@ class DualFC(nn.Module):
             (Variable): float tensor variable with the shape (B x T x C_out)
         """
 
+        # (DualFC) ---> for LP-sign & LP-mags ->  0.5*exp()   ->     (tanh) -> LP-sign
+        #           |                                                (exp)  -> LP-mags
+        #           |-> 16dim -> (ReLU) -> (FC) -> (tanhshrink) -> residual_energy
+
+        # output: LP-signs, LP-mags, residual_energy
+
+        # data-driven_LP_coefficients = LP-signs ⊙ LP-mags
+        #   LP-signs: signs      of data-driven LP vectors (by tanh)
+        #   LP-mags:  magnitudes of data-driven LP vectors (by exp)
+
         # out = fact_1 o tanh(conv_1 * x) + fact_2 o tanh(conv_2 * x)
+        # Multiband
         if self.n_bands > 1:
             if self.mid_out is not None:
+                # Energy-vector LPC
                 if self.lpc > 0:
-                    conv = self.conv(x).transpose(1,2) # B x T x n_bands*(K*4+mid_dim*2)
+                    # DualFC
+                    conv = self.conv(x).transpose(1,2) # (B, T,  n_bands*(K*4+mid_dim*2)  )
+                    #
                     fact_weight = 0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)) # K*4+256*2
                     B = x.shape[0]
                     T = x.shape[2]
                     # B x T x n_bands x K*2 --> B x T x n_bands x K
                     if self.lin_flag:
+                        # # [0:self.lpc2bands]
+                        # clamped_o_DualFC_LP_sign = torch.clamp(conv[:,:,:self.lpc2bands], min=MIN_CLAMP, max=MAX_CLAMP)
+                        # # (Batch, T, Band, 2?, Q?)
+                        # lp_signs = (torch.tanh(clamped_o_DualFC_LP_sign)*fact_weight[:self.lpc2bands]).reshape(B,T,self.n_bands,2,-1)
+                        # returntarget torch.sum(lp_signs, 3)
+
+                        # # [self.lpc2bands:self.lpc4bands]
+                        # clamped_o_DualFC_LP_mag = torch.clamp(conv[:,:,self.lpc2bands:self.lpc4bands], min=MIN_CLAMP, max=MAX_CLAMP)
+                        # # (Batch, T, Band, 2?, Q?)
+                        # lp_mags = (torch.exp(clamped_o_DualFC_LP_mag)*fact_weight[self.lpc2bands:self.lpc4bands]).reshape(B,T,self.n_bands,2,-1)
+                        # returntarget torch.sum(lp_mags, 3)
+
+                        # # [self.lpc4bands:self.lpc6bands]
+                        # o_dualFC_? = conv[:,:,self.lpc4bands:self.lpc6bands]*fact_weight[self.lpc4bands:self.lpc6bands]
+                        # # (Batch, T, Band, 2?, Q?)
+                        # a? = .reshape(B,T,self.n_bands,2,-1)
+                        # returntarget torch.sum(a?, 3), \
+
+                        # activated_o_dualFC_residual = F.relu(conv[:,:,self.lpc6bands:])*fact_weight[self.lpc6bands:]
+                        # # (Batch, T, C) -> (Batch, T, Band, 2?, Q?) -> sum dim3 -> (Batch, T*Band, Q?) -> (Batch, Q?, T*Band)
+                        # aa? = torch.sum(activated_o_dualFC_residual.reshape(B,T,self.n_bands,2,-1), 3).reshape(B,T*self.n_bands,-1).transpose(1,2)
+                        # clamped_o? = torch.clamp(self.out(aa?), min=MIN_CLAMP, max=MAX_CLAMP)
+                        # F.tanhshrink(clamped_o?).transpose(1,2).reshape(B,T,self.n_bands,-1)
+
                         return torch.sum((torch.tanh(torch.clamp(conv[:,:,:self.lpc2bands], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[:self.lpc2bands]).reshape(B,T,self.n_bands,2,-1), 3), \
                                 torch.sum((torch.exp(torch.clamp(conv[:,:,self.lpc2bands:self.lpc4bands], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[self.lpc2bands:self.lpc4bands]).reshape(B,T,self.n_bands,2,-1), 3), \
                                 torch.sum((conv[:,:,self.lpc4bands:self.lpc6bands]*fact_weight[self.lpc4bands:self.lpc6bands]).reshape(B,T,self.n_bands,2,-1), 3), \
@@ -497,6 +538,7 @@ class DualFC(nn.Module):
                                     F.tanhshrink(torch.clamp(self.out(torch.sum((F.relu(conv[:,:,self.lpc4bands:])
                                         *fact_weight[self.lpc4bands:]).reshape(B,T,self.n_bands,2,-1), 3).reshape(B,T*self.n_bands,-1).transpose(1,2)), min=MIN_CLAMP, max=MAX_CLAMP)).transpose(1,2).reshape(B,T,self.n_bands,-1)
                     # B x T x n_bands x mid*2 --> B x (T x n_bands) x mid --> B x mid x (T x n_bands) --> B x T x n_bands x 32
+                # No Energy-vector LPC, only energy_vector (equal to residual_energy)
                 else:
                     # B x T x n_bands x mid*2 --> B x (T x n_bands) x mid --> B x mid x (T x n_bands) --> B x T x n_bands x 32
                     B = x.shape[0]
@@ -504,6 +546,7 @@ class DualFC(nn.Module):
                     return F.tanhshrink(torch.clamp(self.out(torch.sum((F.relu(self.conv(x).transpose(1,2))
                                 *(0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)))).reshape(B,T,self.n_bands,2,-1), 3).reshape(B,T*self.n_bands,-1).transpose(1,2)), min=MIN_CLAMP, max=MAX_CLAMP)).transpose(1,2).reshape(B,T,self.n_bands,-1)
             else:
+                # Energy-vector LPC
                 if self.lpc > 0:
                     conv = self.conv(x).transpose(1,2) # B x T x n_bands*(K*4+256*2)
                     fact_weight = 0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)) # K*4+256*2
@@ -520,13 +563,16 @@ class DualFC(nn.Module):
                                 torch.sum((torch.exp(torch.clamp(conv[:,:,self.lpc2bands:self.lpc4bands], min=MIN_CLAMP,max=MAX_CLAMP)).reshape(B,T,self.n_bands,-1)*fact_weight[self.lpc2:self.lpc4]).reshape(B,T,self.n_bands,2,-1), 3), \
                                     torch.sum((F.tanhshrink(torch.clamp(conv[:,:,self.lpc4bands:], min=MIN_CLAMP, max=MAX_CLAMP)).reshape(B,T,self.n_bands,-1)*fact_weight[self.lpc4:]).reshape(B,T,self.n_bands,2,-1), 3)
                     # B x T x n_bands x 32*2 --> B x T x n_bands x 32
+                # No Energy-vector LPC
                 else:
                     # B x T x n_bands x 32*2 --> B x T x n_bands x 32
                     B = x.shape[0]
                     T = x.shape[2]
                     return torch.sum((F.tanhshrink(torch.clamp(self.conv(x).transpose(1,2), min=MIN_CLAMP, max=MAX_CLAMP)).reshape(B,T,self.n_bands,-1)*(0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)))).reshape(B,T,self.n_bands,2,-1), 3)
+        # Single fullband
         else:
             if self.mid_out is not None:
+                # Single fullband / mid_out / Energy-vector LPC
                 if self.lpc > 0:
                     conv = self.conv(x).transpose(1,2)
                     fact_weight = 0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP))
@@ -539,9 +585,11 @@ class DualFC(nn.Module):
                         return torch.sum((torch.tanh(torch.clamp(conv[:,:,:self.lpc2], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[:self.lpc2]).reshape(x.shape[0],x.shape[2],2,-1), 2), \
                                 torch.sum((torch.exp(torch.clamp(conv[:,:,self.lpc2:self.lpc4], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[self.lpc2:self.lpc4]).reshape(x.shape[0],x.shape[2],2,-1), 2), \
                                 F.tanhshrink(torch.clamp(self.out(torch.sum((F.relu(conv[:,:,self.lpc4:])*fact_weight[self.lpc4:]).reshape(x.shape[0],x.shape[2],2,-1), 2).transpose(1,2)), min=MIN_CLAMP, max=MAX_CLAMP)).transpose(1,2)
+                # Single fullband / !mid_out / No Energy-vector LPC
                 else:
                     return F.tanhshrink(torch.clamp(self.out(torch.sum((F.relu(self.conv(x).transpose(1,2))*(0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)))).reshape(x.shape[0],x.shape[2],2,-1), 2).transpose(1,2)), min=MIN_CLAMP, max=MAX_CLAMP)).transpose(1,2)
             else:
+                # Single fullband / Energy-vector LPC
                 if self.lpc > 0:
                     conv = self.conv(x).transpose(1,2)
                     fact_weight = 0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP))
@@ -554,8 +602,16 @@ class DualFC(nn.Module):
                         return torch.sum((torch.tanh(torch.clamp(conv[:,:,:self.lpc2], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[:self.lpc2]).reshape(x.shape[0],x.shape[2],2,-1), 2), \
                                 torch.sum((torch.exp(torch.clamp(conv[:,:,self.lpc2:self.lpc4], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[self.lpc2:self.lpc4]).reshape(x.shape[0],x.shape[2],2,-1), 2), \
                                     torch.sum((F.tanhshrink(torch.clamp(conv[:,:,self.lpc4:], min=MIN_CLAMP, max=MAX_CLAMP))*fact_weight[self.lpc4:]).reshape(x.shape[0],x.shape[2],2,-1), 2)
+                # Single fullband/ No Energy-vector LPC
                 else:
                     return torch.sum((F.tanhshrink(torch.clamp(self.conv(x).transpose(1,2), min=MIN_CLAMP, max=MAX_CLAMP))*(0.5*torch.exp(torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)))).reshape(x.shape[0],x.shape[2],2,-1), 2)
+                    # torch.sum(
+                    #   (
+                    #     F.tanhshrink(torch.clamp(self.conv(x).transpose(1,2), min=MIN_CLAMP, max=MAX_CLAMP))
+                    #     *
+                    #     (0.5*torch.exp(  torch.clamp(self.fact.weight[0], min=MIN_CLAMP, max=MAX_CLAMP)  ))
+                    #   ).reshape(x.shape[0],x.shape[2],2,-1),
+                    # 2)
 
 
 class EmbeddingZero(nn.Embedding):
